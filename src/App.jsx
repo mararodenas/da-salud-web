@@ -10,12 +10,12 @@ import {
 } from "./caseConfig";
 
 const THEME = {
-  "--ink": "#16302B", "--bg": "#EEF1EF", "--surface": "#FFFFFF",
-  "--primary": "#2F6F62", "--primary-dark": "#1F4F45", "--primary-tint": "#E1EEEA",
-  "--muted": "#5B6B66", "--border": "#DCE3DF", "--border-strong": "#B9C4BE",
+  "--ink": "#0F2547", "--bg": "#F4F6F5", "--surface": "#FFFFFF",
+  "--primary": "#1C7F86", "--primary-dark": "#145F65", "--primary-tint": "#DCEEEC",
+  "--muted": "#56697C", "--border": "#DDE3E9", "--border-strong": "#B7C2CE",
   "--font-display": "'Space Grotesk', sans-serif", "--font-body": "'IBM Plex Sans', sans-serif",
   "--font-mono": "'IBM Plex Mono', monospace",
-  "--shadow": "0 1px 2px rgba(22,48,43,0.05), 0 1px 1px rgba(22,48,43,0.04)",
+  "--shadow": "0 1px 2px rgba(15,37,71,0.05), 0 1px 1px rgba(15,37,71,0.04)",
 };
 
 const inputStyle = {
@@ -53,9 +53,7 @@ function LoginScreen() {
     <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "var(--bg)", padding: 24 }}>
       <form onSubmit={submit} style={{ ...cardStyle, width: "100%", maxWidth: 380, padding: 32 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
-          <div style={{ width: 32, height: 32, borderRadius: 9, background: "var(--primary)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-            <ClipboardList size={17} color="#fff" />
-          </div>
+          <img src="/logo.png" alt="DA Salud" style={{ height: 34, width: "auto" }} />
           <div style={{ fontFamily: "var(--font-display)", fontWeight: 600, fontSize: 18, color: "var(--ink)" }}>DA Salud</div>
         </div>
         <div style={{ fontSize: 13, color: "var(--muted)", marginBottom: 24 }}>Ingresá con tu usuario para continuar</div>
@@ -627,9 +625,7 @@ function AppShell({ session }) {
     <div style={{ minHeight: "100vh", background: "var(--bg)" }}>
       <header style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 24px", borderBottom: "1px solid var(--border)", background: "var(--surface)", flexWrap: "wrap", gap: 12 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <div style={{ width: 30, height: 30, borderRadius: 8, background: "var(--primary)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-            <ClipboardList size={16} color="#fff" />
-          </div>
+          <img src="/logo.png" alt="DA Salud" style={{ height: 28, width: "auto" }} />
           <div style={{ fontFamily: "var(--font-display)", fontWeight: 600, fontSize: 15.5, color: "var(--ink)" }}>DA Salud</div>
         </div>
 

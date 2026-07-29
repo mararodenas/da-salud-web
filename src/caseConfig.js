@@ -18,11 +18,11 @@ export const STATUSES = ["Pendiente", "En revisión", "Información adicional", 
 export const RESOLVED_STATUSES = ["Autorizado", "Rechazado"];
 
 export const STATUS_STYLE = {
-  "Pendiente": { bg: "#E1F5EE", fg: "#085041" },
-  "En revisión": { bg: "#FAEEDA", fg: "#633806" },
-  "Información adicional": { bg: "#FAEEDA", fg: "#633806" },
-  "Autorizado": { bg: "#EAF3DE", fg: "#27500A" },
-  "Rechazado": { bg: "#FCEBEB", fg: "#791F1F" },
+  "Pendiente": { bg: "#E1F0EF", fg: "#145F65" },
+  "En revisión": { bg: "#FDEFD9", fg: "#8A5A0D" },
+  "Información adicional": { bg: "#FDEFD9", fg: "#8A5A0D" },
+  "Autorizado": { bg: "#DFF3E1", fg: "#1F6B3A" },
+  "Rechazado": { bg: "#FBE7E7", fg: "#A13333" },
 };
 
 export function displayCode(id) {
@@ -49,8 +49,8 @@ export function slaInfo(dueAt, status, now) {
 }
 
 export const TONE_COLORS = {
-  ok: { bg: "#E1F5EE", fg: "#085041" },
-  urgent: { bg: "#FAEEDA", fg: "#633806" },
-  danger: { bg: "#FCEBEB", fg: "#791F1F" },
-  done: { bg: "#F1EFE8", fg: "#5F5E5A" },
+  ok: { bg: "#E1F0EF", fg: "#145F65" },
+  urgent: { bg: "#FDEFD9", fg: "#8A5A0D" },
+  danger: { bg: "#FBE7E7", fg: "#A13333" },
+  done: { bg: "#EEF0F2", fg: "#56697C" },
 };
