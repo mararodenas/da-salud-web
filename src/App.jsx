@@ -5,7 +5,7 @@ import {
 } from "lucide-react";
 import { supabase } from "./supabaseClient";
 import {
-  CASE_TYPES, CASE_TYPE_CONFIG, PRIORITIES, STATUS_STYLE,
+  CASE_TYPES, CASE_TYPE_CONFIG, PRIORITIES, STATUSES, STATUS_STYLE,
   displayCode, slaInfo, TONE_COLORS,
 } from "./caseConfig";
 
@@ -311,12 +311,16 @@ function NewCaseView({ perfil, onCreated, goTo }) {
 
 /* ---------- casos ---------- */
 
-function CasesView({ refreshKey }) {
+function CasesView({ refreshKey, perfil }) {
   const [casos, setCasos] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [q, setQ] = useState("");
   const [now, setNow] = useState(Date.now());
+  const [expandedId, setExpandedId] = useState(null);
+  const [bump, setBump] = useState(0);
+
+  const canDecide = perfil.rol === "Auditor" || perfil.rol === "Coordinador";
 
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 30000);
@@ -327,7 +331,7 @@ function CasesView({ refreshKey }) {
     let active = true;
     setLoading(true);
     supabase.from("casos")
-      .select("id, titulo, tipo, estado, prioridad, vence_en, creado_en, clientes(nombre), afiliados(nombre, numero_afiliado)")
+      .select("id, titulo, descripcion, tipo, estado, prioridad, vence_en, creado_en, clientes(nombre), afiliados(nombre, numero_afiliado)")
       .order("creado_en", { ascending: false })
       .then(({ data, error }) => {
         if (!active) return;
@@ -335,7 +339,7 @@ function CasesView({ refreshKey }) {
         setLoading(false);
       });
     return () => { active = false; };
-  }, [refreshKey]);
+  }, [refreshKey, bump]);
 
   const filtered = casos.filter((c) => !q.trim() || (c.titulo + " " + (c.clientes?.nombre || "")).toLowerCase().includes(q.toLowerCase()));
 
@@ -359,26 +363,125 @@ function CasesView({ refreshKey }) {
           <EmptyState icon={Inbox} text="No hay casos para mostrar todavía." />
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {filtered.map((c) => {
-              const st = STATUS_STYLE[c.estado] || { bg: "#eee", fg: "#333" };
-              const sla = slaInfo(c.vence_en, c.estado, now);
-              const tone = TONE_COLORS[sla.tone];
-              return (
-                <div key={c.id} style={{ ...cardStyle, padding: "13px 16px", display: "flex", flexDirection: "column", gap: 6 }}>
-                  <span style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--muted)" }}>{displayCode(c.id)}</span>
-                  <div style={{ fontSize: 14, fontWeight: 500, color: "var(--ink)" }}>{c.titulo}</div>
-                  <div style={{ fontSize: 12, color: "var(--muted)" }}>{c.tipo} · {c.clientes?.nombre || "—"}</div>
-                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 2 }}>
-                    <Pill bg={st.bg} fg={st.fg}>{c.estado}</Pill>
-                    <span style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "3px 9px", borderRadius: 6, fontSize: 12, fontWeight: 500, background: tone.bg, color: tone.fg, fontFamily: "var(--font-mono)" }}>
-                      <Clock size={12} /> {sla.label}
-                    </span>
-                  </div>
-                </div>
-              );
-            })}
+            {filtered.map((c) => (
+              <CaseCard
+                key={c.id} c={c} now={now} canDecide={canDecide} perfil={perfil}
+                expanded={expandedId === c.id}
+                onToggle={() => setExpandedId(expandedId === c.id ? null : c.id)}
+                onChanged={() => setBump((b) => b + 1)}
+              />
+            ))}
           </div>
         )
+      )}
+    </div>
+  );
+}
+
+function CaseCard({ c, now, canDecide, perfil, expanded, onToggle, onChanged }) {
+  const [notas, setNotas] = useState([]);
+  const [loadingNotas, setLoadingNotas] = useState(false);
+  const [note, setNote] = useState("");
+  const [savingNote, setSavingNote] = useState(false);
+  const [savingStatus, setSavingStatus] = useState(false);
+
+  const st = STATUS_STYLE[c.estado] || { bg: "#eee", fg: "#333" };
+  const sla = slaInfo(c.vence_en, c.estado, now);
+  const tone = TONE_COLORS[sla.tone];
+
+  useEffect(() => {
+    if (!expanded) return;
+    setLoadingNotas(true);
+    supabase.from("notas").select("texto, creado_en").eq("caso_id", c.id).order("creado_en", { ascending: false })
+      .then(({ data }) => { setNotas(data || []); setLoadingNotas(false); });
+  }, [expanded, c.id]);
+
+  const changeStatus = async (estado) => {
+    setSavingStatus(true);
+    await supabase.from("casos").update({ estado }).eq("id", c.id);
+    setSavingStatus(false);
+    onChanged();
+  };
+
+  const addNote = async () => {
+    if (!note.trim()) return;
+    setSavingNote(true);
+    const { error } = await supabase.from("notas").insert({ caso_id: c.id, texto: note.trim() });
+    if (!error) {
+      setNotas((prev) => [{ texto: note.trim(), creado_en: new Date().toISOString() }, ...prev]);
+      setNote("");
+    }
+    setSavingNote(false);
+  };
+
+  return (
+    <div style={{ ...cardStyle, overflow: "hidden" }}>
+      <button onClick={onToggle} style={{
+        width: "100%", textAlign: "left", background: "transparent", border: "none", cursor: "pointer",
+        padding: "13px 16px", display: "flex", flexDirection: "column", gap: 6, fontFamily: "var(--font-body)",
+      }}>
+        <span style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--muted)" }}>{displayCode(c.id)}</span>
+        <div style={{ fontSize: 14, fontWeight: 500, color: "var(--ink)" }}>{c.titulo}</div>
+        <div style={{ fontSize: 12, color: "var(--muted)" }}>{c.tipo} · {c.clientes?.nombre || "—"}</div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 2 }}>
+          <Pill bg={st.bg} fg={st.fg}>{c.estado}</Pill>
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "3px 9px", borderRadius: 6, fontSize: 12, fontWeight: 500, background: tone.bg, color: tone.fg, fontFamily: "var(--font-mono)" }}>
+            <Clock size={12} /> {sla.label}
+          </span>
+        </div>
+      </button>
+
+      {expanded && (
+        <div style={{ padding: "0 16px 16px", borderTop: "1px solid var(--border)" }}>
+          {c.descripcion && (
+            <div style={{ fontSize: 13, color: "var(--ink)", background: "var(--bg)", padding: 12, borderRadius: 8, margin: "14px 0" }}>
+              {c.descripcion}
+            </div>
+          )}
+          <div style={{ display: "flex", gap: 20, flexWrap: "wrap", fontSize: 13, marginBottom: 14, marginTop: c.descripcion ? 0 : 14 }}>
+            <div>
+              <div style={{ fontSize: 11, color: "var(--muted)" }}>Afiliado</div>
+              <div style={{ fontWeight: 500, color: "var(--ink)" }}>{c.afiliados?.nombre || "—"}{c.afiliados?.numero_afiliado ? " · N° " + c.afiliados.numero_afiliado : ""}</div>
+            </div>
+            <div>
+              <div style={{ fontSize: 11, color: "var(--muted)" }}>Prioridad</div>
+              <div style={{ fontWeight: 500, color: "var(--ink)" }}>{c.prioridad}</div>
+            </div>
+          </div>
+
+          {canDecide && (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 16 }}>
+              {STATUSES.map((s) => (
+                <button key={s} disabled={savingStatus || c.estado === s} onClick={() => changeStatus(s)} style={{
+                  padding: "6px 12px", borderRadius: 7, fontSize: 12, fontWeight: 500, fontFamily: "var(--font-body)",
+                  border: c.estado === s ? "1.5px solid var(--primary)" : "1px solid var(--border)",
+                  background: c.estado === s ? "var(--primary-tint)" : "var(--surface)",
+                  color: c.estado === s ? "var(--primary-dark)" : "var(--ink)",
+                  cursor: c.estado === s ? "default" : "pointer",
+                }}>
+                  {s}
+                </button>
+              ))}
+            </div>
+          )}
+
+          <div style={{ fontSize: 12, fontWeight: 500, color: "var(--muted)", marginBottom: 8 }}>
+            Notas {loadingNotas ? "" : `(${notas.length})`}
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 10, maxHeight: 180, overflowY: "auto" }}>
+            {!loadingNotas && notas.length === 0 && <div style={{ fontSize: 12, color: "var(--muted)" }}>Todavía no hay notas.</div>}
+            {notas.map((n, i) => (
+              <div key={i} style={{ fontSize: 12.5, background: "var(--bg)", borderRadius: 8, padding: "8px 10px" }}>
+                <span style={{ color: "var(--muted)", fontFamily: "var(--font-mono)", fontSize: 11 }}>{new Date(n.creado_en).toLocaleString("es-AR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}</span>
+                <div style={{ color: "var(--ink)", marginTop: 2 }}>{n.texto}</div>
+              </div>
+            ))}
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <input value={note} onChange={(e) => setNote(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addNote()} placeholder="Agregar una nota..." style={{ ...inputStyle, flex: 1 }} />
+            <button onClick={addNote} disabled={!note.trim() || savingNote} style={btnPrimary(!!note.trim())}>Enviar</button>
+          </div>
+        </div>
       )}
     </div>
   );
@@ -458,7 +561,7 @@ function AppShell({ session }) {
 
       {view === "padron" && <PadronView />}
       {view === "nuevo" && <NewCaseView perfil={perfil} goTo={setView} onCreated={() => setRefreshKey((k) => k + 1)} />}
-      {view === "casos" && <CasesView refreshKey={refreshKey} />}
+      {view === "casos" && <CasesView refreshKey={refreshKey} perfil={perfil} />}
     </div>
   );
 }
