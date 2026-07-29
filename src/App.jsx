@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import {
   ClipboardList, Plus, LogOut, Users, AlertTriangle,
-  Clock, Search, Inbox, Paperclip, FileText, Building2,
+  Clock, Search, Inbox, Paperclip, FileText, Building2, ShieldCheck,
 } from "lucide-react";
 import { supabase } from "./supabaseClient";
 import {
@@ -615,6 +615,218 @@ function EmptyState({ icon: Icon, text }) {
 
 /* ---------- shell ---------- */
 
+/* ---------- clientes (alta de financiadores) ---------- */
+
+const MESES = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"];
+
+function ClientesView() {
+  const [clientes, setClientes] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [nombre, setNombre] = useState("");
+  const [tipo, setTipo] = useState(CLIENT_TYPES[0]);
+  const [mesInicio, setMesInicio] = useState(1);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  const load = () => {
+    setLoading(true);
+    supabase.from("clientes").select("id, nombre, tipo, mes_inicio_ejercicio").order("nombre")
+      .then(({ data, error }) => { if (error) setError(error.message); else setClientes(data || []); setLoading(false); });
+  };
+  useEffect(load, []);
+
+  const addCliente = async () => {
+    if (!nombre.trim()) return;
+    setSaving(true); setError("");
+    const { error } = await supabase.from("clientes").insert({ nombre: nombre.trim(), tipo, mes_inicio_ejercicio: mesInicio });
+    setSaving(false);
+    if (error) { setError(error.message); return; }
+    setNombre(""); setTipo(CLIENT_TYPES[0]); setMesInicio(1);
+    load();
+  };
+
+  return (
+    <div style={{ maxWidth: 640, margin: "0 auto", padding: "28px 24px" }}>
+      <h2 style={{ fontFamily: "var(--font-display)", fontWeight: 600, fontSize: 19, color: "var(--ink)", marginBottom: 4 }}>Clientes</h2>
+      <p style={{ fontSize: 13, color: "var(--muted)", marginBottom: 24 }}>Alta de financiadores, prestadores y demás organizaciones.</p>
+
+      <div style={{ ...cardStyle, padding: 20, marginBottom: 24 }}>
+        <label style={labelStyle}>Nombre</label>
+        <input value={nombre} onChange={(e) => setNombre(e.target.value)} placeholder="Ej. OSDE" style={inputStyle} />
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginTop: 14 }}>
+          <div>
+            <label style={labelStyle}>Tipo</label>
+            <select value={tipo} onChange={(e) => setTipo(e.target.value)} style={inputStyle}>
+              {CLIENT_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+            </select>
+          </div>
+          <div>
+            <label style={labelStyle}>Inicio de ejercicio fiscal</label>
+            <select value={mesInicio} onChange={(e) => setMesInicio(Number(e.target.value))} style={inputStyle}>
+              {MESES.map((m, i) => <option key={i} value={i + 1}>{m}{i === 0 ? " (año calendario)" : ""}</option>)}
+            </select>
+          </div>
+        </div>
+
+        {error && <div style={{ marginTop: 12, fontSize: 12.5, color: "#A13333", background: "#FBE7E7", padding: "8px 10px", borderRadius: 8 }}>{error}</div>}
+
+        <button onClick={addCliente} disabled={!nombre.trim() || saving} style={{ ...btnPrimary(!!nombre.trim()), marginTop: 16 }}>
+          <Plus size={16} /> {saving ? "Guardando..." : "Crear cliente"}
+        </button>
+      </div>
+
+      {loading ? (
+        <div style={{ fontSize: 13, color: "var(--muted)" }}>Cargando...</div>
+      ) : clientes.length === 0 ? (
+        <EmptyState icon={Building2} text="Todavía no hay clientes cargados." />
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {clientes.map((c) => (
+            <div key={c.id} style={{ ...cardStyle, padding: "12px 14px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <div>
+                <div style={{ fontSize: 14, fontWeight: 500, color: "var(--ink)" }}>{c.nombre}</div>
+                <div style={{ fontSize: 12, color: "var(--muted)" }}>{c.tipo}</div>
+              </div>
+              <div style={{ fontSize: 12, color: "var(--muted)" }}>Ejercicio desde {MESES[c.mes_inicio_ejercicio - 1]}</div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ---------- reglas de autorizacion ---------- */
+
+function ReglasView({ perfil }) {
+  const isAdminGeneral = perfil.rol === "Administrador";
+  const [clientes, setClientes] = useState([]);
+  const [clienteId, setClienteId] = useState(isAdminGeneral ? "" : perfil.cliente_id);
+
+  const [tipo, setTipo] = useState(CASE_TYPES[0]);
+  const [catalogItems, setCatalogItems] = useState([]);
+  const [catalogoItemId, setCatalogoItemId] = useState("");
+  const [limite, setLimite] = useState(3);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  const [reglas, setReglas] = useState([]);
+  const [loadingReglas, setLoadingReglas] = useState(false);
+
+  useEffect(() => {
+    if (!isAdminGeneral) return;
+    supabase.from("clientes").select("id, nombre").order("nombre").then(({ data }) => setClientes(data || []));
+  }, [isAdminGeneral]);
+
+  useEffect(() => {
+    setCatalogoItemId("");
+    supabase.from("catalogo_items").select("id, nombre").eq("catalogo_key", CASE_TYPE_CONFIG[tipo].catalogKey).order("nombre")
+      .then(({ data }) => setCatalogItems(data || []));
+  }, [tipo]);
+
+  const loadReglas = () => {
+    if (!clienteId) { setReglas([]); return; }
+    setLoadingReglas(true);
+    supabase.from("reglas_autorizacion")
+      .select("id, limite_anual, activo, catalogo_items(nombre, catalogo_key)")
+      .eq("cliente_id", clienteId)
+      .then(({ data }) => { setReglas(data || []); setLoadingReglas(false); });
+  };
+  useEffect(loadReglas, [clienteId]);
+
+  const guardarRegla = async () => {
+    if (!clienteId || !catalogoItemId || !limite) return;
+    setSaving(true); setError("");
+    const { error } = await supabase.from("reglas_autorizacion")
+      .upsert({ cliente_id: clienteId, catalogo_item_id: catalogoItemId, limite_anual: limite, activo: true }, { onConflict: "cliente_id,catalogo_item_id" });
+    setSaving(false);
+    if (error) { setError(error.message); return; }
+    setCatalogoItemId(""); setLimite(3);
+    loadReglas();
+  };
+
+  const toggleActivo = async (id, activo) => {
+    await supabase.from("reglas_autorizacion").update({ activo: !activo }).eq("id", id);
+    loadReglas();
+  };
+
+  return (
+    <div style={{ maxWidth: 640, margin: "0 auto", padding: "28px 24px" }}>
+      <h2 style={{ fontFamily: "var(--font-display)", fontWeight: 600, fontSize: 19, color: "var(--ink)", marginBottom: 4 }}>Reglas de autorización</h2>
+      <p style={{ fontSize: 13, color: "var(--muted)", marginBottom: 24 }}>
+        Límite anual por prestación. Al superarlo, el sistema no deja cargar el caso y pide gestionar una autorización especial.
+      </p>
+
+      {isAdminGeneral && (
+        <>
+          <label style={labelStyle}>Cliente</label>
+          <select value={clienteId} onChange={(e) => setClienteId(e.target.value)} style={{ ...inputStyle, marginBottom: 20 }}>
+            <option value="">Seleccionar cliente...</option>
+            {clientes.map((c) => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+          </select>
+        </>
+      )}
+
+      {clienteId && (
+        <>
+          <div style={{ ...cardStyle, padding: 20, marginBottom: 24 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+              <div>
+                <label style={labelStyle}>Tipo de auditoría</label>
+                <select value={tipo} onChange={(e) => setTipo(e.target.value)} style={inputStyle}>
+                  {CASE_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+                </select>
+              </div>
+              <div>
+                <label style={labelStyle}>Límite anual</label>
+                <input type="number" min={1} value={limite} onChange={(e) => setLimite(Number(e.target.value))} style={inputStyle} />
+              </div>
+            </div>
+
+            <label style={{ ...labelStyle, marginTop: 14 }}>{CASE_TYPE_CONFIG[tipo].fieldLabel}</label>
+            <select value={catalogoItemId} onChange={(e) => setCatalogoItemId(e.target.value)} style={inputStyle}>
+              <option value="">Seleccionar...</option>
+              {catalogItems.map((it) => <option key={it.id} value={it.id}>{it.nombre}</option>)}
+            </select>
+
+            {error && <div style={{ marginTop: 12, fontSize: 12.5, color: "#A13333", background: "#FBE7E7", padding: "8px 10px", borderRadius: 8 }}>{error}</div>}
+
+            <button onClick={guardarRegla} disabled={!catalogoItemId || !limite || saving} style={{ ...btnPrimary(!!catalogoItemId && !!limite), marginTop: 16 }}>
+              {saving ? "Guardando..." : "Guardar regla"}
+            </button>
+          </div>
+
+          {loadingReglas ? (
+            <div style={{ fontSize: 13, color: "var(--muted)" }}>Cargando...</div>
+          ) : reglas.length === 0 ? (
+            <EmptyState icon={ShieldCheck} text="Todavía no hay reglas cargadas para este cliente." />
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {reglas.map((r) => (
+                <div key={r.id} style={{ ...cardStyle, padding: "12px 14px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                  <div>
+                    <div style={{ fontSize: 14, fontWeight: 500, color: "var(--ink)" }}>{r.catalogo_items?.nombre}</div>
+                    <div style={{ fontSize: 12, color: "var(--muted)" }}>Límite: {r.limite_anual} por año</div>
+                  </div>
+                  <button onClick={() => toggleActivo(r.id, r.activo)} style={{
+                    padding: "5px 12px", borderRadius: 7, fontSize: 12, fontWeight: 500, cursor: "pointer", fontFamily: "var(--font-body)",
+                    border: "1px solid var(--border)", background: r.activo ? "var(--primary-tint)" : "var(--bg)",
+                    color: r.activo ? "var(--primary-dark)" : "var(--muted)",
+                  }}>
+                    {r.activo ? "Activa" : "Inactiva"}
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+
 function AppShell({ session }) {
   const [perfil, setPerfil] = useState(null);
   const [view, setViewRaw] = useState(null);
@@ -645,6 +857,8 @@ function AppShell({ session }) {
     ["nuevo", "Nuevo caso", Plus],
     ["casos", "Casos", ClipboardList],
   ];
+  if (perfil.rol === "Administrador") NAV.push(["clientes", "Clientes", Building2]);
+  if (perfil.rol === "Administrador" || perfil.rol === "Administrador Cliente") NAV.push(["reglas", "Reglas", ShieldCheck]);
 
   return (
     <div style={{ minHeight: "100vh", background: "var(--bg)" }}>
@@ -689,6 +903,8 @@ function AppShell({ session }) {
       {view === "padron" && <PadronView />}
       {view === "nuevo" && <NewCaseView perfil={perfil} goTo={setView} onCreated={() => setRefreshKey((k) => k + 1)} />}
       {view === "casos" && <CasesView refreshKey={refreshKey} perfil={perfil} />}
+      {view === "clientes" && <ClientesView />}
+      {view === "reglas" && <ReglasView perfil={perfil} />}
     </div>
   );
 }
