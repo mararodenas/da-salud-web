@@ -124,6 +124,88 @@ function PadronView() {
   );
 }
 
+/* ---------- selector de catálogo en cascada ---------- */
+
+function CatalogPicker({ catalogoKey, onChange, canManage }) {
+  const [levels, setLevels] = useState([]);
+  const [showAdd, setShowAdd] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [loading, setLoading] = useState(true);
+
+  const loadLevel = async (parentId) => {
+    let q = supabase.from("catalogo_items").select("id, nombre").eq("catalogo_key", catalogoKey).order("nombre");
+    q = parentId === null ? q.is("parent_id", null) : q.eq("parent_id", parentId);
+    const { data } = await q;
+    return data || [];
+  };
+
+  useEffect(() => {
+    let active = true;
+    setLoading(true); setShowAdd(false);
+    loadLevel(null).then((items) => {
+      if (!active) return;
+      setLevels([{ parentId: null, items, selected: "" }]);
+      setLoading(false);
+      onChange("", "");
+    });
+    return () => { active = false; };
+  }, [catalogoKey]);
+
+  const selectAt = async (depth, id) => {
+    if (id === "__new__") { setShowAdd(true); return; }
+    setShowAdd(false);
+    const trimmed = levels.slice(0, depth + 1);
+    trimmed[depth] = { ...trimmed[depth], selected: id };
+    if (!id) { setLevels(trimmed); onChange("", ""); return; }
+    const item = trimmed[depth].items.find((i) => i.id === id);
+    const children = await loadLevel(id);
+    if (children.length > 0) {
+      setLevels([...trimmed, { parentId: id, items: children, selected: "" }]);
+      onChange("", "");
+    } else {
+      setLevels(trimmed);
+      onChange(id, item?.nombre || "");
+    }
+  };
+
+  const addItem = async () => {
+    if (!newName.trim()) return;
+    const depth = levels.length - 1;
+    const parentId = levels[depth].parentId;
+    const { data, error } = await supabase.from("catalogo_items")
+      .insert({ catalogo_key: catalogoKey, nombre: newName.trim(), parent_id: parentId })
+      .select().single();
+    if (error) return;
+    const updated = [...levels];
+    updated[depth] = { ...updated[depth], items: [...updated[depth].items, data], selected: data.id };
+    setLevels(updated);
+    setShowAdd(false); setNewName("");
+    onChange(data.id, data.nombre);
+  };
+
+  if (loading) return <div style={{ fontSize: 13, color: "var(--muted)" }}>Cargando...</div>;
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      {levels.map((lvl, depth) => (
+        <select key={depth} value={lvl.selected} onChange={(e) => selectAt(depth, e.target.value)} style={inputStyle}>
+          <option value="">Seleccionar...</option>
+          {lvl.items.map((it) => <option key={it.id} value={it.id}>{it.nombre}</option>)}
+          {canManage && <option value="__new__">+ Agregar</option>}
+        </select>
+      ))}
+      {showAdd && (
+        <div style={{ display: "flex", gap: 8 }}>
+          <input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="Nombre" style={{ ...inputStyle, flex: 1 }} />
+          <button onClick={addItem} disabled={!newName.trim()} style={btnPrimary(!!newName.trim())}>Agregar</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+
 /* ---------- nuevo caso ---------- */
 
 function NewCaseView({ perfil, onCreated, goTo }) {
@@ -148,10 +230,8 @@ function NewCaseView({ perfil, onCreated, goTo }) {
   const [newAffNumber, setNewAffNumber] = useState("");
 
   const [tipo, setTipo] = useState(CASE_TYPES[0]);
-  const [catalogItems, setCatalogItems] = useState([]);
   const [detailValue, setDetailValue] = useState("");
-  const [showNewItem, setShowNewItem] = useState(false);
-  const [newItemName, setNewItemName] = useState("");
+  const [detailName, setDetailName] = useState("");
 
   const [priority, setPriority] = useState("Media");
   const [title, setTitle] = useState("");
@@ -182,22 +262,18 @@ function NewCaseView({ perfil, onCreated, goTo }) {
   }, [clienteId]);
 
   useEffect(() => {
-    setDetailValue(""); setShowNewItem(false); setLastCreated(null);
-    const key = CASE_TYPE_CONFIG[tipo].catalogKey;
-    supabase.from("catalogo_items").select("id, nombre, categoria").eq("catalogo_key", key).order("nombre")
-      .then(({ data }) => setCatalogItems(data || []));
+    setDetailValue(""); setDetailName(""); setLastCreated(null);
   }, [tipo]);
 
   const afiliado = afiliados.find((a) => a.id === afiliadoId);
-  const detailItem = catalogItems.find((i) => i.id === detailValue);
 
   useEffect(() => {
     if (titleTouched) return;
     const parts = [];
     if (afiliado) { parts.push(afiliado.nombre); if (afiliado.numero_afiliado) parts.push("N° " + afiliado.numero_afiliado); }
-    if (detailItem) parts.push(detailItem.nombre);
+    if (detailName) parts.push(detailName);
     setTitle(parts.join(" — "));
-  }, [afiliadoId, detailValue]);
+  }, [afiliadoId, detailName]);
 
   const addAffiliate = async () => {
     if (!newAffName.trim() || !clienteId) return;
@@ -208,17 +284,6 @@ function NewCaseView({ perfil, onCreated, goTo }) {
     setAfiliados((prev) => [...prev, data]);
     setAfiliadoId(data.id);
     setShowNewAffiliate(false); setNewAffName(""); setNewAffNumber("");
-  };
-
-  const addCatalogItem = async () => {
-    if (!newItemName.trim()) return;
-    const key = CASE_TYPE_CONFIG[tipo].catalogKey;
-    const { data, error } = await supabase.from("catalogo_items")
-      .insert({ catalogo_key: key, nombre: newItemName.trim() }).select().single();
-    if (error) { setError(error.message); return; }
-    setCatalogItems((prev) => [...prev, data]);
-    setDetailValue(data.id);
-    setShowNewItem(false); setNewItemName("");
   };
 
   const submit = async () => {
@@ -233,7 +298,7 @@ function NewCaseView({ perfil, onCreated, goTo }) {
     setSaving(false);
     if (error) { setError(error.message); return; }
     setLastCreated(title.trim());
-    setTitle(""); setTitleTouched(false); setDescription(""); setDetailValue(""); setShowNewItem(false);
+    setTitle(""); setTitleTouched(false); setDescription(""); setDetailValue(""); setDetailName("");
     onCreated();
   };
 
@@ -307,21 +372,12 @@ function NewCaseView({ perfil, onCreated, goTo }) {
       </div>
 
       <label style={{ ...labelStyle, marginTop: 14 }}>{CASE_TYPE_CONFIG[tipo].fieldLabel}</label>
-      <select
-        value={showNewItem ? "__new__" : detailValue}
-        onChange={(e) => { if (e.target.value === "__new__") { setShowNewItem(true); return; } setShowNewItem(false); setDetailValue(e.target.value); }}
-        style={inputStyle}
-      >
-        <option value="">Seleccionar...</option>
-        {catalogItems.map((it) => <option key={it.id} value={it.id}>{it.nombre}</option>)}
-        {canManageCatalog && <option value="__new__">+ Agregar {CASE_TYPE_CONFIG[tipo].fieldLabel.toLowerCase()}</option>}
-      </select>
-      {showNewItem && (
-        <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-          <input value={newItemName} onChange={(e) => setNewItemName(e.target.value)} placeholder="Nombre" style={{ ...inputStyle, flex: 1 }} />
-          <button onClick={addCatalogItem} disabled={!newItemName.trim()} style={btnPrimary(!!newItemName.trim())}>Agregar</button>
-        </div>
-      )}
+      <CatalogPicker
+        key={tipo}
+        catalogoKey={CASE_TYPE_CONFIG[tipo].catalogKey}
+        canManage={canManageCatalog}
+        onChange={(id, nombre) => { setDetailValue(id); setDetailName(nombre); }}
+      />
 
       <label style={{ ...labelStyle, marginTop: 14 }}>Título del caso</label>
       <input value={title} onChange={(e) => { setTitle(e.target.value); setTitleTouched(true); }} style={inputStyle} />
@@ -705,8 +761,8 @@ function ReglasView({ perfil }) {
   const [clienteId, setClienteId] = useState(isAdminGeneral ? "" : perfil.cliente_id);
 
   const [tipo, setTipo] = useState(CASE_TYPES[0]);
-  const [catalogItems, setCatalogItems] = useState([]);
   const [catalogoItemId, setCatalogoItemId] = useState("");
+  const [catalogoItemName, setCatalogoItemName] = useState("");
   const [limite, setLimite] = useState(3);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -720,9 +776,7 @@ function ReglasView({ perfil }) {
   }, [isAdminGeneral]);
 
   useEffect(() => {
-    setCatalogoItemId("");
-    supabase.from("catalogo_items").select("id, nombre").eq("catalogo_key", CASE_TYPE_CONFIG[tipo].catalogKey).order("nombre")
-      .then(({ data }) => setCatalogItems(data || []));
+    setCatalogoItemId(""); setCatalogoItemName("");
   }, [tipo]);
 
   const loadReglas = () => {
@@ -742,7 +796,7 @@ function ReglasView({ perfil }) {
       .upsert({ cliente_id: clienteId, catalogo_item_id: catalogoItemId, limite_anual: limite, activo: true }, { onConflict: "cliente_id,catalogo_item_id" });
     setSaving(false);
     if (error) { setError(error.message); return; }
-    setCatalogoItemId(""); setLimite(3);
+    setCatalogoItemId(""); setCatalogoItemName(""); setLimite(3);
     loadReglas();
   };
 
@@ -785,10 +839,12 @@ function ReglasView({ perfil }) {
             </div>
 
             <label style={{ ...labelStyle, marginTop: 14 }}>{CASE_TYPE_CONFIG[tipo].fieldLabel}</label>
-            <select value={catalogoItemId} onChange={(e) => setCatalogoItemId(e.target.value)} style={inputStyle}>
-              <option value="">Seleccionar...</option>
-              {catalogItems.map((it) => <option key={it.id} value={it.id}>{it.nombre}</option>)}
-            </select>
+            <CatalogPicker
+              key={tipo}
+              catalogoKey={CASE_TYPE_CONFIG[tipo].catalogKey}
+              canManage={true}
+              onChange={(id, nombre) => { setCatalogoItemId(id); setCatalogoItemName(nombre); }}
+            />
 
             {error && <div style={{ marginTop: 12, fontSize: 12.5, color: "#A13333", background: "#FBE7E7", padding: "8px 10px", borderRadius: 8 }}>{error}</div>}
 
