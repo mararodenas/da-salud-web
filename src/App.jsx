@@ -1028,7 +1028,10 @@ function ReglasView({ perfil }) {
   const [tipo, setTipo] = useState(CASE_TYPES[0]);
   const [catalogoItemId, setCatalogoItemId] = useState("");
   const [catalogoItemName, setCatalogoItemName] = useState("");
+  const [tipoRegla, setTipoRegla] = useState("anual");
   const [limite, setLimite] = useState(3);
+  const [intervaloMeses, setIntervaloMeses] = useState(24);
+  const [margenGracia, setMargenGracia] = useState(1);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
@@ -1048,20 +1051,28 @@ function ReglasView({ perfil }) {
     if (!clienteId) { setReglas([]); return; }
     setLoadingReglas(true);
     supabase.from("reglas_autorizacion")
-      .select("id, limite_anual, activo, catalogo_items(nombre, catalogo_key)")
+      .select("id, tipo_regla, limite_anual, intervalo_meses, margen_gracia_meses, activo, catalogo_items(nombre, catalogo_key)")
       .eq("cliente_id", clienteId)
       .then(({ data }) => { setReglas(data || []); setLoadingReglas(false); });
   };
   useEffect(loadReglas, [clienteId]);
 
   const guardarRegla = async () => {
-    if (!clienteId || !catalogoItemId || !limite) return;
+    if (!clienteId || !catalogoItemId) return;
+    if (tipoRegla === "anual" && !limite) return;
+    if (tipoRegla === "intervalo" && !intervaloMeses) return;
     setSaving(true); setError("");
+    const payload = { cliente_id: clienteId, catalogo_item_id: catalogoItemId, activo: true, tipo_regla: tipoRegla };
+    if (tipoRegla === "anual") {
+      payload.limite_anual = limite; payload.intervalo_meses = null; payload.margen_gracia_meses = 0;
+    } else {
+      payload.limite_anual = null; payload.intervalo_meses = intervaloMeses; payload.margen_gracia_meses = margenGracia;
+    }
     const { error } = await supabase.from("reglas_autorizacion")
-      .upsert({ cliente_id: clienteId, catalogo_item_id: catalogoItemId, limite_anual: limite, activo: true }, { onConflict: "cliente_id,catalogo_item_id" });
+      .upsert(payload, { onConflict: "cliente_id,catalogo_item_id" });
     setSaving(false);
     if (error) { setError(error.message); return; }
-    setCatalogoItemId(""); setCatalogoItemName(""); setLimite(3);
+    setCatalogoItemId(""); setCatalogoItemName(""); setLimite(3); setIntervaloMeses(24); setMargenGracia(1);
     loadReglas();
   };
 
@@ -1074,7 +1085,7 @@ function ReglasView({ perfil }) {
     <div style={{ maxWidth: 640, margin: "0 auto", padding: "28px 24px" }}>
       <h2 style={{ fontFamily: "var(--font-display)", fontWeight: 600, fontSize: 19, color: "var(--ink)", marginBottom: 4 }}>Reglas de autorización</h2>
       <p style={{ fontSize: 13, color: "var(--muted)", marginBottom: 24 }}>
-        Límite anual por prestación. Al superarlo, el sistema no deja cargar el caso y pide gestionar una autorización especial.
+        Cantidad por año, o intervalo mínimo entre solicitudes. Al no cumplirse, el sistema no deja cargar el caso y pide gestionar una autorización especial.
       </p>
 
       {isAdminGeneral && (
@@ -1098,8 +1109,11 @@ function ReglasView({ perfil }) {
                 </select>
               </div>
               <div>
-                <label style={labelStyle}>Límite anual</label>
-                <input type="number" min={1} value={limite} onChange={(e) => setLimite(Number(e.target.value))} style={inputStyle} />
+                <label style={labelStyle}>Tipo de regla</label>
+                <select value={tipoRegla} onChange={(e) => setTipoRegla(e.target.value)} style={inputStyle}>
+                  <option value="anual">Cantidad por año</option>
+                  <option value="intervalo">Intervalo mínimo (meses)</option>
+                </select>
               </div>
             </div>
 
@@ -1111,9 +1125,36 @@ function ReglasView({ perfil }) {
               onChange={(id, nombre) => { setCatalogoItemId(id); setCatalogoItemName(nombre); }}
             />
 
+            {tipoRegla === "anual" ? (
+              <>
+                <label style={{ ...labelStyle, marginTop: 14 }}>Límite anual</label>
+                <input type="number" min={1} value={limite} onChange={(e) => setLimite(Number(e.target.value))} style={inputStyle} />
+              </>
+            ) : (
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginTop: 14 }}>
+                <div>
+                  <label style={labelStyle}>Cada cuántos meses</label>
+                  <input type="number" min={1} value={intervaloMeses} onChange={(e) => setIntervaloMeses(Number(e.target.value))} style={inputStyle} />
+                </div>
+                <div>
+                  <label style={labelStyle}>Margen de gracia (meses)</label>
+                  <input type="number" min={0} value={margenGracia} onChange={(e) => setMargenGracia(Number(e.target.value))} style={inputStyle} />
+                </div>
+              </div>
+            )}
+            {tipoRegla === "intervalo" && (
+              <div style={{ fontSize: 11.5, color: "var(--muted)", marginTop: 6 }}>
+                Ej: cada 24 meses con margen 1 → se bloquea antes de los 23 meses; entre 23 y 24 se deja cargar pero queda marcado para revisión especial.
+              </div>
+            )}
+
             {error && <div style={{ marginTop: 12, fontSize: 12.5, color: "#A13333", background: "#FBE7E7", padding: "8px 10px", borderRadius: 8 }}>{error}</div>}
 
-            <button onClick={guardarRegla} disabled={!catalogoItemId || !limite || saving} style={{ ...btnPrimary(!!catalogoItemId && !!limite), marginTop: 16 }}>
+            <button
+              onClick={guardarRegla}
+              disabled={!catalogoItemId || (tipoRegla === "anual" ? !limite : !intervaloMeses) || saving}
+              style={{ ...btnPrimary(!!catalogoItemId), marginTop: 16 }}
+            >
               {saving ? "Guardando..." : "Guardar regla"}
             </button>
           </div>
@@ -1128,7 +1169,11 @@ function ReglasView({ perfil }) {
                 <div key={r.id} style={{ ...cardStyle, padding: "12px 14px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                   <div>
                     <div style={{ fontSize: 14, fontWeight: 500, color: "var(--ink)" }}>{r.catalogo_items?.nombre}</div>
-                    <div style={{ fontSize: 12, color: "var(--muted)" }}>Límite: {r.limite_anual} por año</div>
+                    <div style={{ fontSize: 12, color: "var(--muted)" }}>
+                      {r.tipo_regla === "anual"
+                        ? `Límite: ${r.limite_anual} por año`
+                        : `Mínimo cada ${r.intervalo_meses} meses (margen de ${r.margen_gracia_meses})`}
+                    </div>
                   </div>
                   <button onClick={() => toggleActivo(r.id, r.activo)} style={{
                     padding: "5px 12px", borderRadius: 7, fontSize: 12, fontWeight: 500, cursor: "pointer", fontFamily: "var(--font-body)",
