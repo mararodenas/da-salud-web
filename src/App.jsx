@@ -163,6 +163,7 @@ function NewCaseView({ perfil, onCreated, goTo }) {
 
   const isClientSide = perfil.rol === "Cliente" || perfil.rol === "Administrador Cliente";
   const canManagePadron = perfil.rol === "Auditor" || perfil.rol === "Coordinador" || perfil.rol === "Administrador" || perfil.rol === "Administrador Cliente";
+  const canManageCatalog = perfil.rol === "Administrador" || perfil.rol === "Administrador Cliente";
 
   useEffect(() => {
     if (isClientSide) return;
@@ -313,7 +314,7 @@ function NewCaseView({ perfil, onCreated, goTo }) {
       >
         <option value="">Seleccionar...</option>
         {catalogItems.map((it) => <option key={it.id} value={it.id}>{it.nombre}</option>)}
-        <option value="__new__">+ Agregar {CASE_TYPE_CONFIG[tipo].fieldLabel.toLowerCase()}</option>
+        {canManageCatalog && <option value="__new__">+ Agregar {CASE_TYPE_CONFIG[tipo].fieldLabel.toLowerCase()}</option>}
       </select>
       {showNewItem && (
         <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
