@@ -344,6 +344,8 @@ function CasesView({ refreshKey, perfil }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [q, setQ] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [tipoFilter, setTipoFilter] = useState("all");
   const [now, setNow] = useState(Date.now());
   const [expandedId, setExpandedId] = useState(null);
   const [bump, setBump] = useState(0);
@@ -359,7 +361,7 @@ function CasesView({ refreshKey, perfil }) {
     let active = true;
     setLoading(true);
     supabase.from("casos")
-      .select("id, titulo, descripcion, tipo, estado, prioridad, vence_en, creado_en, clientes(nombre), afiliados(nombre, numero_afiliado)")
+      .select("id, titulo, descripcion, tipo, estado, prioridad, vence_en, creado_en, clientes(nombre), afiliados(nombre, numero_afiliado), asignado:perfiles!casos_asignado_a_fkey(nombre)")
       .order("creado_en", { ascending: false })
       .then(({ data, error }) => {
         if (!active) return;
@@ -369,7 +371,12 @@ function CasesView({ refreshKey, perfil }) {
     return () => { active = false; };
   }, [refreshKey, bump]);
 
-  const filtered = casos.filter((c) => !q.trim() || (c.titulo + " " + (c.clientes?.nombre || "")).toLowerCase().includes(q.toLowerCase()));
+  const filtered = casos.filter((c) => {
+    if (statusFilter !== "all" && c.estado !== statusFilter) return false;
+    if (tipoFilter !== "all" && c.tipo !== tipoFilter) return false;
+    if (q.trim() && !(c.titulo + " " + (c.clientes?.nombre || "")).toLowerCase().includes(q.toLowerCase())) return false;
+    return true;
+  });
 
   return (
     <div style={{ maxWidth: 760, margin: "0 auto", padding: "28px 24px" }}>
@@ -378,9 +385,19 @@ function CasesView({ refreshKey, perfil }) {
       </h2>
       <p style={{ fontSize: 13, color: "var(--muted)", marginBottom: 16 }}>Filtrados automáticamente según tu acceso.</p>
 
-      <div style={{ position: "relative", marginBottom: 16 }}>
-        <Search size={15} color="var(--muted)" style={{ position: "absolute", left: 11, top: 11 }} />
-        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Buscar por título o cliente" style={{ ...inputStyle, paddingLeft: 32 }} />
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 16 }}>
+        <div style={{ position: "relative", flex: "1 1 220px" }}>
+          <Search size={15} color="var(--muted)" style={{ position: "absolute", left: 11, top: 11 }} />
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Buscar por título o cliente" style={{ ...inputStyle, paddingLeft: 32 }} />
+        </div>
+        <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} style={{ ...inputStyle, flex: "1 1 160px" }}>
+          <option value="all">Todos los estados</option>
+          {STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
+        </select>
+        <select value={tipoFilter} onChange={(e) => setTipoFilter(e.target.value)} style={{ ...inputStyle, flex: "1 1 180px" }}>
+          <option value="all">Todos los tipos</option>
+          {CASE_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+        </select>
       </div>
 
       {loading && <div style={{ fontSize: 13, color: "var(--muted)" }}>Cargando...</div>}
@@ -481,7 +498,10 @@ function CaseCard({ c, now, canDecide, perfil, expanded, onToggle, onChanged }) 
       }}>
         <span style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--muted)" }}>{displayCode(c.id)}</span>
         <div style={{ fontSize: 14, fontWeight: 500, color: "var(--ink)" }}>{c.titulo}</div>
-        <div style={{ fontSize: 12, color: "var(--muted)" }}>{c.tipo} · {c.clientes?.nombre || "—"}</div>
+        <div style={{ fontSize: 12, color: "var(--muted)" }}>
+          {c.tipo} · {c.clientes?.nombre || "—"}
+          {c.asignado?.nombre ? " · asignado a " + c.asignado.nombre : " · sin asignar"}
+        </div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 2 }}>
           <Pill bg={st.bg} fg={st.fg}>{c.estado}</Pill>
           <span style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "3px 9px", borderRadius: 6, fontSize: 12, fontWeight: 500, background: tone.bg, color: tone.fg, fontFamily: "var(--font-mono)" }}>
@@ -501,6 +521,10 @@ function CaseCard({ c, now, canDecide, perfil, expanded, onToggle, onChanged }) 
             <div>
               <div style={{ fontSize: 11, color: "var(--muted)" }}>Afiliado</div>
               <div style={{ fontWeight: 500, color: "var(--ink)" }}>{c.afiliados?.nombre || "—"}{c.afiliados?.numero_afiliado ? " · N° " + c.afiliados.numero_afiliado : ""}</div>
+            </div>
+            <div>
+              <div style={{ fontSize: 11, color: "var(--muted)" }}>Asignado a</div>
+              <div style={{ fontWeight: 500, color: "var(--ink)" }}>{c.asignado?.nombre || "Sin asignar"}</div>
             </div>
             <div>
               <div style={{ fontSize: 11, color: "var(--muted)" }}>Prioridad</div>
