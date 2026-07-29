@@ -836,6 +836,37 @@ function ClientesView() {
 function ClienteCard({ c, expanded, onToggle, onChanged }) {
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState("");
+  const [editing, setEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState("");
+  const [form, setForm] = useState(null);
+
+  const startEdit = () => {
+    setForm({
+      nombre: c.nombre || "", tipo: c.tipo, mes_inicio_ejercicio: c.mes_inicio_ejercicio,
+      nombre_contacto: c.nombre_contacto || "", telefono_contacto: c.telefono_contacto || "",
+      email_contacto: c.email_contacto || "", cuit: c.cuit || "",
+      domicilio_fiscal: c.domicilio_fiscal || "", localidad: c.localidad || "",
+      provincia: c.provincia || "", tipo_contrato: c.tipo_contrato || TIPOS_CONTRATO[0],
+    });
+    setEditing(true); setSaveError("");
+  };
+
+  const guardarEdicion = async () => {
+    if (!form.nombre.trim()) return;
+    setSaving(true); setSaveError("");
+    const { error } = await supabase.from("clientes").update({
+      nombre: form.nombre.trim(), tipo: form.tipo, mes_inicio_ejercicio: form.mes_inicio_ejercicio,
+      nombre_contacto: form.nombre_contacto.trim() || null, telefono_contacto: form.telefono_contacto.trim() || null,
+      email_contacto: form.email_contacto.trim() || null, cuit: form.cuit.trim() || null,
+      domicilio_fiscal: form.domicilio_fiscal.trim() || null, localidad: form.localidad.trim() || null,
+      provincia: form.provincia.trim() || null, tipo_contrato: form.tipo_contrato,
+    }).eq("id", c.id);
+    setSaving(false);
+    if (error) { setSaveError(error.message); return; }
+    setEditing(false);
+    onChanged();
+  };
 
   const handleFile = async (e) => {
     const file = e.target.files[0];
@@ -870,9 +901,90 @@ function ClienteCard({ c, expanded, onToggle, onChanged }) {
         <div style={{ fontSize: 12, color: "var(--muted)" }}>Ejercicio desde {MESES[c.mes_inicio_ejercicio - 1]}</div>
       </button>
 
-      {expanded && (
+      {expanded && editing && (
         <div style={{ padding: "0 14px 16px", borderTop: "1px solid var(--border)" }}>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 20, fontSize: 13, margin: "14px 0" }}>
+          <div style={{ marginTop: 14 }}>
+            <label style={labelStyle}>Nombre</label>
+            <input value={form.nombre} onChange={(e) => setForm({ ...form, nombre: e.target.value })} style={inputStyle} />
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginTop: 14 }}>
+            <div>
+              <label style={labelStyle}>Tipo</label>
+              <select value={form.tipo} onChange={(e) => setForm({ ...form, tipo: e.target.value })} style={inputStyle}>
+                {CLIENT_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+              </select>
+            </div>
+            <div>
+              <label style={labelStyle}>Inicio de ejercicio fiscal</label>
+              <select value={form.mes_inicio_ejercicio} onChange={(e) => setForm({ ...form, mes_inicio_ejercicio: Number(e.target.value) })} style={inputStyle}>
+                {MESES.map((m, i) => <option key={i} value={i + 1}>{m}{i === 0 ? " (año calendario)" : ""}</option>)}
+              </select>
+            </div>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginTop: 14 }}>
+            <div>
+              <label style={labelStyle}>Nombre de contacto</label>
+              <input value={form.nombre_contacto} onChange={(e) => setForm({ ...form, nombre_contacto: e.target.value })} style={inputStyle} />
+            </div>
+            <div>
+              <label style={labelStyle}>Teléfono de contacto</label>
+              <input value={form.telefono_contacto} onChange={(e) => setForm({ ...form, telefono_contacto: e.target.value })} style={inputStyle} />
+            </div>
+          </div>
+          <label style={{ ...labelStyle, marginTop: 14 }}>Email de contacto</label>
+          <input type="email" value={form.email_contacto} onChange={(e) => setForm({ ...form, email_contacto: e.target.value })} style={inputStyle} />
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginTop: 14 }}>
+            <div>
+              <label style={labelStyle}>CUIT</label>
+              <input value={form.cuit} onChange={(e) => setForm({ ...form, cuit: e.target.value })} style={inputStyle} />
+            </div>
+            <div>
+              <label style={labelStyle}>Tipo de contrato</label>
+              <select value={form.tipo_contrato} onChange={(e) => setForm({ ...form, tipo_contrato: e.target.value })} style={inputStyle}>
+                {TIPOS_CONTRATO.map((t) => <option key={t} value={t}>{t}</option>)}
+              </select>
+            </div>
+          </div>
+          <label style={{ ...labelStyle, marginTop: 14 }}>Domicilio fiscal</label>
+          <input value={form.domicilio_fiscal} onChange={(e) => setForm({ ...form, domicilio_fiscal: e.target.value })} style={inputStyle} />
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginTop: 14 }}>
+            <div>
+              <label style={labelStyle}>Localidad</label>
+              <input value={form.localidad} onChange={(e) => setForm({ ...form, localidad: e.target.value })} style={inputStyle} />
+            </div>
+            <div>
+              <label style={labelStyle}>Provincia</label>
+              <input value={form.provincia} onChange={(e) => setForm({ ...form, provincia: e.target.value })} style={inputStyle} />
+            </div>
+          </div>
+
+          {saveError && <div style={{ marginTop: 12, fontSize: 12.5, color: "#A13333", background: "#FBE7E7", padding: "8px 10px", borderRadius: 8 }}>{saveError}</div>}
+
+          <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
+            <button onClick={guardarEdicion} disabled={!form.nombre.trim() || saving} style={btnPrimary(!!form.nombre.trim())}>
+              {saving ? "Guardando..." : "Guardar cambios"}
+            </button>
+            <button onClick={() => setEditing(false)} style={{
+              padding: "11px 16px", borderRadius: 9, border: "1px solid var(--border)", background: "transparent",
+              cursor: "pointer", fontSize: 14, fontFamily: "var(--font-body)", color: "var(--muted)",
+            }}>
+              Cancelar
+            </button>
+          </div>
+        </div>
+      )}
+
+      {expanded && !editing && (
+        <div style={{ padding: "0 14px 16px", borderTop: "1px solid var(--border)" }}>
+          <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 14 }}>
+            <button onClick={startEdit} style={{
+              fontSize: 12.5, fontWeight: 500, color: "var(--primary-dark)", background: "transparent",
+              border: "none", cursor: "pointer", fontFamily: "var(--font-body)",
+            }}>
+              Editar datos
+            </button>
+          </div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 20, fontSize: 13, margin: "6px 0 14px" }}>
             <Field label="Contacto" value={c.nombre_contacto || "—"} />
             <Field label="Teléfono" value={c.telefono_contacto || "—"} />
             <Field label="Email" value={c.email_contacto || "—"} />
