@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import {
   ClipboardList, Plus, LogOut, Users, AlertTriangle,
   Clock, Search, Inbox, Paperclip, FileText,
@@ -130,9 +130,21 @@ function PadronView() {
 
 function NewCaseView({ perfil, onCreated, goTo }) {
   const [clientes, setClientes] = useState([]);
-  const [clienteId, setClienteId] = useState(perfil.rol === "Cliente" ? perfil.cliente_id : "");
+  const [clienteId, setClienteIdRaw] = useState(
+    perfil.rol === "Cliente" ? perfil.cliente_id : (localStorage.getItem("da_salud_nc_cliente") || "")
+  );
   const [afiliados, setAfiliados] = useState([]);
-  const [afiliadoId, setAfiliadoId] = useState("");
+  const [afiliadoId, setAfiliadoIdRaw] = useState(localStorage.getItem("da_salud_nc_afiliado") || "");
+
+  const setClienteId = (id) => {
+    setClienteIdRaw(id);
+    try { localStorage.setItem("da_salud_nc_cliente", id || ""); } catch { /* ignore */ }
+  };
+  const setAfiliadoId = (id) => {
+    setAfiliadoIdRaw(id);
+    try { localStorage.setItem("da_salud_nc_afiliado", id || ""); } catch { /* ignore */ }
+  };
+
   const [showNewAffiliate, setShowNewAffiliate] = useState(false);
   const [newAffName, setNewAffName] = useState("");
   const [newAffNumber, setNewAffNumber] = useState("");
@@ -158,8 +170,12 @@ function NewCaseView({ perfil, onCreated, goTo }) {
     supabase.from("clientes").select("id, nombre, tipo").order("nombre").then(({ data }) => setClientes(data || []));
   }, [perfil.rol]);
 
+  const isFirstClienteEffect = useRef(true);
   useEffect(() => {
-    setAfiliadoId(""); setShowNewAffiliate(false); setLastCreated(null);
+    const wasFirst = isFirstClienteEffect.current;
+    isFirstClienteEffect.current = false;
+    if (!wasFirst) setAfiliadoId("");
+    setShowNewAffiliate(false); setLastCreated(null);
     if (!clienteId) { setAfiliados([]); return; }
     supabase.from("afiliados").select("id, nombre, numero_afiliado, estado").eq("cliente_id", clienteId).order("nombre")
       .then(({ data }) => setAfiliados(data || []));
@@ -258,7 +274,7 @@ function NewCaseView({ perfil, onCreated, goTo }) {
           >
             <option value="">Seleccionar afiliado...</option>
             {afiliados.map((a) => <option key={a.id} value={a.id}>{a.nombre}{a.numero_afiliado ? " · N° " + a.numero_afiliado : ""}{a.estado === "Baja" ? " (Baja)" : ""}</option>)}
-            <option value="__new__">+ Agregar afiliado al padrón</option>
+            {canManageCatalog && <option value="__new__">+ Agregar afiliado al padrón</option>}
           </select>
           {afiliado?.estado === "Baja" && (
             <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8, padding: "8px 12px", background: "#FAEEDA", color: "#633806", borderRadius: 8, fontSize: 12.5 }}>
@@ -298,7 +314,7 @@ function NewCaseView({ perfil, onCreated, goTo }) {
       >
         <option value="">Seleccionar...</option>
         {catalogItems.map((it) => <option key={it.id} value={it.id}>{it.nombre}</option>)}
-        {canManageCatalog && <option value="__new__">+ Agregar {CASE_TYPE_CONFIG[tipo].fieldLabel.toLowerCase()}</option>}
+        <option value="__new__">+ Agregar {CASE_TYPE_CONFIG[tipo].fieldLabel.toLowerCase()}</option>
       </select>
       {showNewItem && (
         <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
@@ -577,15 +593,24 @@ function EmptyState({ icon: Icon, text }) {
 
 function AppShell({ session }) {
   const [perfil, setPerfil] = useState(null);
-  const [view, setView] = useState(null);
+  const [view, setViewRaw] = useState(null);
   const [refreshKey, setRefreshKey] = useState(0);
+
+  const setView = (v) => {
+    setViewRaw(v);
+    try { localStorage.setItem("da_salud_view", v); } catch { /* ignore */ }
+  };
 
   useEffect(() => {
     supabase.from("perfiles").select("nombre, rol, cliente_id, clientes(nombre)").eq("id", session.user.id).single()
       .then(({ data }) => {
         const p = data ? { ...data, cliente_nombre: data.clientes?.nombre } : null;
         setPerfil(p);
-        if (p) setView(p.rol === "Auditor" || p.rol === "Coordinador" ? "casos" : "padron");
+        if (p) {
+          let saved = null;
+          try { saved = localStorage.getItem("da_salud_view"); } catch { /* ignore */ }
+          setViewRaw(saved || (p.rol === "Auditor" || p.rol === "Coordinador" ? "casos" : "padron"));
+        }
       });
   }, [session]);
 
