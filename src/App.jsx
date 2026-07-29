@@ -9,6 +9,8 @@ import {
   displayCode, slaInfo, TONE_COLORS,
 } from "./caseConfig";
 
+const CLIENT_TYPES = ["Obra social", "Prepaga", "Prestador", "ART", "Otro"];
+
 const THEME = {
   "--ink": "#0F2547", "--bg": "#F4F6F5", "--surface": "#FFFFFF",
   "--primary": "#1C7F86", "--primary-dark": "#145F65", "--primary-tint": "#DCEEEC",
