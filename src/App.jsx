@@ -427,7 +427,10 @@ function CaseCard({ c, now, canDecide, perfil, expanded, onToggle, onChanged }) 
     if (!file) return;
     if (file.size > 10 * 1024 * 1024) { setUploadError("El archivo supera los 10 MB."); return; }
     setUploading(true); setUploadError("");
-    const path = `${c.id}/${Date.now()}-${file.name}`;
+    const safeName = file.name
+      .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+      .replace(/[^a-zA-Z0-9.\-_]/g, "_");
+    const path = `${c.id}/${Date.now()}-${safeName}`;
     const { error: upErr } = await supabase.storage.from("adjuntos").upload(path, file);
     if (upErr) { setUploadError(upErr.message); setUploading(false); return; }
     const { data, error: insErr } = await supabase.from("adjuntos")
