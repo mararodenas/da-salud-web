@@ -131,7 +131,7 @@ function PadronView() {
 function NewCaseView({ perfil, onCreated, goTo }) {
   const [clientes, setClientes] = useState([]);
   const [clienteId, setClienteIdRaw] = useState(
-    perfil.rol === "Cliente" ? perfil.cliente_id : (localStorage.getItem("da_salud_nc_cliente") || "")
+    (perfil.rol === "Cliente" || perfil.rol === "Administrador Cliente") ? perfil.cliente_id : (localStorage.getItem("da_salud_nc_cliente") || "")
   );
   const [afiliados, setAfiliados] = useState([]);
   const [afiliadoId, setAfiliadoIdRaw] = useState(localStorage.getItem("da_salud_nc_afiliado") || "");
@@ -163,10 +163,11 @@ function NewCaseView({ perfil, onCreated, goTo }) {
   const [error, setError] = useState("");
   const [lastCreated, setLastCreated] = useState(null);
 
-  const canManageCatalog = perfil.rol === "Auditor" || perfil.rol === "Coordinador";
+  const isClientSide = perfil.rol === "Cliente" || perfil.rol === "Administrador Cliente";
+  const canManagePadron = perfil.rol === "Auditor" || perfil.rol === "Coordinador" || perfil.rol === "Administrador" || perfil.rol === "Administrador Cliente";
 
   useEffect(() => {
-    if (perfil.rol === "Cliente") return;
+    if (isClientSide) return;
     supabase.from("clientes").select("id, nombre, tipo").order("nombre").then(({ data }) => setClientes(data || []));
   }, [perfil.rol]);
 
@@ -255,7 +256,7 @@ function NewCaseView({ perfil, onCreated, goTo }) {
       )}
 
       <label style={labelStyle}>Solicitante</label>
-      {perfil.rol === "Cliente" ? (
+      {isClientSide ? (
         <div style={{ ...inputStyle, background: "var(--bg)", color: "var(--muted)" }}>{perfil.cliente_nombre || "Tu organización"}</div>
       ) : (
         <select value={clienteId} onChange={(e) => setClienteId(e.target.value)} style={inputStyle}>
@@ -274,7 +275,7 @@ function NewCaseView({ perfil, onCreated, goTo }) {
           >
             <option value="">Seleccionar afiliado...</option>
             {afiliados.map((a) => <option key={a.id} value={a.id}>{a.nombre}{a.numero_afiliado ? " · N° " + a.numero_afiliado : ""}{a.estado === "Baja" ? " (Baja)" : ""}</option>)}
-            {canManageCatalog && <option value="__new__">+ Agregar afiliado al padrón</option>}
+            {canManagePadron && <option value="__new__">+ Agregar afiliado al padrón</option>}
           </select>
           {afiliado?.estado === "Baja" && (
             <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8, padding: "8px 12px", background: "#FAEEDA", color: "#633806", borderRadius: 8, fontSize: 12.5 }}>
@@ -349,7 +350,7 @@ function CasesView({ refreshKey, perfil }) {
   const [expandedId, setExpandedId] = useState(null);
   const [bump, setBump] = useState(0);
 
-  const canDecide = perfil.rol === "Auditor" || perfil.rol === "Coordinador";
+  const canDecide = perfil.rol === "Auditor" || perfil.rol === "Coordinador" || perfil.rol === "Administrador";
 
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 30000);
@@ -609,7 +610,7 @@ function AppShell({ session }) {
         if (p) {
           let saved = null;
           try { saved = localStorage.getItem("da_salud_view"); } catch { /* ignore */ }
-          setViewRaw(saved || (p.rol === "Auditor" || p.rol === "Coordinador" ? "casos" : "padron"));
+          setViewRaw(saved || ((p.rol === "Auditor" || p.rol === "Coordinador" || p.rol === "Administrador") ? "casos" : "padron"));
         }
       });
   }, [session]);
