@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import {
   ClipboardList, Plus, LogOut, Users, AlertTriangle,
-  Clock, Search, Inbox,
+  Clock, Search, Inbox, Paperclip, FileText,
 } from "lucide-react";
 import { supabase } from "./supabaseClient";
 import {
@@ -384,6 +384,10 @@ function CaseCard({ c, now, canDecide, perfil, expanded, onToggle, onChanged }) 
   const [note, setNote] = useState("");
   const [savingNote, setSavingNote] = useState(false);
   const [savingStatus, setSavingStatus] = useState(false);
+  const [adjuntos, setAdjuntos] = useState([]);
+  const [loadingAdjuntos, setLoadingAdjuntos] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState("");
 
   const st = STATUS_STYLE[c.estado] || { bg: "#eee", fg: "#333" };
   const sla = slaInfo(c.vence_en, c.estado, now);
@@ -394,6 +398,9 @@ function CaseCard({ c, now, canDecide, perfil, expanded, onToggle, onChanged }) 
     setLoadingNotas(true);
     supabase.from("notas").select("texto, creado_en").eq("caso_id", c.id).order("creado_en", { ascending: false })
       .then(({ data }) => { setNotas(data || []); setLoadingNotas(false); });
+    setLoadingAdjuntos(true);
+    supabase.from("adjuntos").select("id, nombre_archivo, ruta, creado_en").eq("caso_id", c.id).order("creado_en", { ascending: false })
+      .then(({ data }) => { setAdjuntos(data || []); setLoadingAdjuntos(false); });
   }, [expanded, c.id]);
 
   const changeStatus = async (estado) => {
@@ -412,6 +419,27 @@ function CaseCard({ c, now, canDecide, perfil, expanded, onToggle, onChanged }) 
       setNote("");
     }
     setSavingNote(false);
+  };
+
+  const handleFile = async (e) => {
+    const file = e.target.files[0];
+    e.target.value = "";
+    if (!file) return;
+    if (file.size > 10 * 1024 * 1024) { setUploadError("El archivo supera los 10 MB."); return; }
+    setUploading(true); setUploadError("");
+    const path = `${c.id}/${Date.now()}-${file.name}`;
+    const { error: upErr } = await supabase.storage.from("adjuntos").upload(path, file);
+    if (upErr) { setUploadError(upErr.message); setUploading(false); return; }
+    const { data, error: insErr } = await supabase.from("adjuntos")
+      .insert({ caso_id: c.id, nombre_archivo: file.name, ruta: path }).select().single();
+    if (insErr) { setUploadError(insErr.message); setUploading(false); return; }
+    setAdjuntos((prev) => [data, ...prev]);
+    setUploading(false);
+  };
+
+  const viewFile = async (ruta) => {
+    const { data, error } = await supabase.storage.from("adjuntos").createSignedUrl(ruta, 60);
+    if (!error && data) window.open(data.signedUrl, "_blank");
   };
 
   return (
@@ -464,6 +492,33 @@ function CaseCard({ c, now, canDecide, perfil, expanded, onToggle, onChanged }) 
               ))}
             </div>
           )}
+
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+            <span style={{ fontSize: 12, fontWeight: 500, color: "var(--muted)" }}>
+              Adjuntos {loadingAdjuntos ? "" : `(${adjuntos.length})`}
+            </span>
+            <label style={{
+              fontSize: 12, fontWeight: 500, color: "var(--primary-dark)", cursor: uploading ? "default" : "pointer",
+              display: "flex", alignItems: "center", gap: 5,
+            }}>
+              <Paperclip size={13} /> {uploading ? "Subiendo..." : "Adjuntar archivo"}
+              <input type="file" onChange={handleFile} disabled={uploading} style={{ display: "none" }} />
+            </label>
+          </div>
+          {uploadError && <div style={{ fontSize: 12, color: "#791F1F", background: "#FCEBEB", padding: "6px 10px", borderRadius: 8, marginBottom: 8 }}>{uploadError}</div>}
+          <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 16 }}>
+            {!loadingAdjuntos && adjuntos.length === 0 && <div style={{ fontSize: 12, color: "var(--muted)" }}>Todavía no hay archivos adjuntos.</div>}
+            {adjuntos.map((a) => (
+              <button key={a.id} onClick={() => viewFile(a.ruta)} style={{
+                display: "flex", alignItems: "center", gap: 8, padding: "7px 10px", borderRadius: 8,
+                border: "1px solid var(--border)", background: "var(--surface)", cursor: "pointer",
+                fontSize: 12.5, color: "var(--ink)", textAlign: "left", fontFamily: "var(--font-body)",
+              }}>
+                <FileText size={14} color="var(--muted)" style={{ flexShrink: 0 }} />
+                <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.nombre_archivo}</span>
+              </button>
+            ))}
+          </div>
 
           <div style={{ fontSize: 12, fontWeight: 500, color: "var(--muted)", marginBottom: 8 }}>
             Notas {loadingNotas ? "" : `(${notas.length})`}
