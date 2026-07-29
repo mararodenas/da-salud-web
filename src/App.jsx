@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import {
   ClipboardList, Plus, LogOut, Users, AlertTriangle,
-  Clock, Search, Inbox, Paperclip, FileText,
+  Clock, Search, Inbox, Paperclip, FileText, Building2,
 } from "lucide-react";
 import { supabase } from "./supabaseClient";
 import {
@@ -255,14 +255,14 @@ function NewCaseView({ perfil, onCreated, goTo }) {
         </div>
       )}
 
-      <label style={labelStyle}>Solicitante</label>
-      {isClientSide ? (
-        <div style={{ ...inputStyle, background: "var(--bg)", color: "var(--muted)" }}>{perfil.cliente_nombre || "Tu organización"}</div>
-      ) : (
-        <select value={clienteId} onChange={(e) => setClienteId(e.target.value)} style={inputStyle}>
-          <option value="">Seleccionar cliente...</option>
-          {clientes.map((c) => <option key={c.id} value={c.id}>{c.nombre} · {c.tipo}</option>)}
-        </select>
+      {!isClientSide && (
+        <>
+          <label style={labelStyle}>Solicitante</label>
+          <select value={clienteId} onChange={(e) => setClienteId(e.target.value)} style={inputStyle}>
+            <option value="">Seleccionar cliente...</option>
+            {clientes.map((c) => <option key={c.id} value={c.id}>{c.nombre} · {c.tipo}</option>)}
+          </select>
+        </>
       )}
 
       {clienteId && (
@@ -646,9 +646,18 @@ function AppShell({ session }) {
         </nav>
 
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          {perfil.cliente_nombre && (
+            <div style={{
+              display: "flex", alignItems: "center", gap: 6, padding: "6px 12px", borderRadius: 20,
+              background: "var(--primary-tint)", border: "1px solid var(--primary)",
+            }}>
+              <Building2 size={13} color="var(--primary-dark)" />
+              <span style={{ fontSize: 12, fontWeight: 600, color: "var(--primary-dark)" }}>{perfil.cliente_nombre}</span>
+            </div>
+          )}
           <div style={{ textAlign: "right" }}>
             <div style={{ fontSize: 12.5, fontWeight: 500, color: "var(--ink)" }}>{perfil.nombre}</div>
-            <div style={{ fontSize: 11, color: "var(--muted)" }}>{perfil.rol}{perfil.cliente_nombre ? " · " + perfil.cliente_nombre : ""}</div>
+            <div style={{ fontSize: 11, color: "var(--muted)" }}>{perfil.rol}</div>
           </div>
           <button onClick={() => supabase.auth.signOut()} style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 12px", borderRadius: 8, border: "1px solid var(--border)", background: "transparent", cursor: "pointer", fontSize: 12.5, fontFamily: "var(--font-body)" }}>
             <LogOut size={14} /> Salir
