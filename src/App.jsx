@@ -149,6 +149,7 @@ function NewCaseView({ perfil, onCreated, goTo }) {
   const [description, setDescription] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [lastCreated, setLastCreated] = useState(null);
 
   const canManageCatalog = perfil.rol === "Auditor" || perfil.rol === "Coordinador";
 
@@ -158,14 +159,14 @@ function NewCaseView({ perfil, onCreated, goTo }) {
   }, [perfil.rol]);
 
   useEffect(() => {
-    setAfiliadoId(""); setShowNewAffiliate(false);
+    setAfiliadoId(""); setShowNewAffiliate(false); setLastCreated(null);
     if (!clienteId) { setAfiliados([]); return; }
     supabase.from("afiliados").select("id, nombre, numero_afiliado, estado").eq("cliente_id", clienteId).order("nombre")
       .then(({ data }) => setAfiliados(data || []));
   }, [clienteId]);
 
   useEffect(() => {
-    setDetailValue(""); setShowNewItem(false);
+    setDetailValue(""); setShowNewItem(false); setLastCreated(null);
     const key = CASE_TYPE_CONFIG[tipo].catalogKey;
     supabase.from("catalogo_items").select("id, nombre, categoria").eq("catalogo_key", key).order("nombre")
       .then(({ data }) => setCatalogItems(data || []));
@@ -206,7 +207,7 @@ function NewCaseView({ perfil, onCreated, goTo }) {
 
   const submit = async () => {
     if (!title.trim() || !clienteId) return;
-    setSaving(true); setError("");
+    setSaving(true); setError(""); setLastCreated(null);
     const { error } = await supabase.from("casos").insert({
       tipo, cliente_id: clienteId,
       afiliado_id: afiliadoId || null,
@@ -215,15 +216,27 @@ function NewCaseView({ perfil, onCreated, goTo }) {
     });
     setSaving(false);
     if (error) { setError(error.message); return; }
-    setTitle(""); setTitleTouched(false); setDescription(""); setAfiliadoId("");
+    setLastCreated(title.trim());
+    setTitle(""); setTitleTouched(false); setDescription(""); setDetailValue(""); setShowNewItem(false);
     onCreated();
-    goTo("casos");
   };
 
   return (
     <div style={{ maxWidth: 560, margin: "0 auto", padding: "28px 24px" }}>
       <h2 style={{ fontFamily: "var(--font-display)", fontWeight: 600, fontSize: 19, color: "var(--ink)", marginBottom: 4 }}>Nuevo caso</h2>
       <p style={{ fontSize: 13, color: "var(--muted)", marginBottom: 24 }}>El plazo de respuesta y el auditor se calculan solos.</p>
+
+      {lastCreated && (
+        <div style={{
+          display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap",
+          background: "#EAF3DE", color: "#27500A", padding: "10px 14px", borderRadius: 10, fontSize: 13, marginBottom: 20,
+        }}>
+          <span>✓ Caso creado: <strong>{lastCreated}</strong>. Podés cargar otra prestación para el mismo afiliado, o</span>
+          <button onClick={() => goTo("casos")} style={{ background: "transparent", border: "none", color: "#1F4F45", fontWeight: 600, cursor: "pointer", fontSize: 13, fontFamily: "var(--font-body)", textDecoration: "underline" }}>
+            ir a Casos
+          </button>
+        </div>
+      )}
 
       <label style={labelStyle}>Solicitante</label>
       {perfil.rol === "Cliente" ? (
