@@ -658,6 +658,15 @@ function CaseCard({ c, now, canDecide, perfil, expanded, onToggle, onChanged }) 
 
 /* ---------- shared atoms ---------- */
 
+function Field({ label, value }) {
+  return (
+    <div>
+      <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 2 }}>{label}</div>
+      <div style={{ fontSize: 13, fontWeight: 500, color: "var(--ink)" }}>{value}</div>
+    </div>
+  );
+}
+
 function Pill({ children, bg, fg }) {
   return <span style={{ display: "inline-flex", alignItems: "center", padding: "3px 10px", borderRadius: 20, fontSize: 12, fontWeight: 500, background: bg, color: fg, whiteSpace: "nowrap" }}>{children}</span>;
 }
@@ -677,29 +686,58 @@ function EmptyState({ icon: Icon, text }) {
 
 const MESES = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"];
 
+const TIPOS_CONTRATO = ["Fee mensual", "Paquete por volumen", "Valor por caso", "Proyecto cerrado", "Bolsa de horas", "Servicio tecnológico", "Modelo mixto"];
+
 function ClientesView() {
   const [clientes, setClientes] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [expandedId, setExpandedId] = useState(null);
+
   const [nombre, setNombre] = useState("");
   const [tipo, setTipo] = useState(CLIENT_TYPES[0]);
   const [mesInicio, setMesInicio] = useState(1);
+  const [nombreContacto, setNombreContacto] = useState("");
+  const [telefonoContacto, setTelefonoContacto] = useState("");
+  const [emailContacto, setEmailContacto] = useState("");
+  const [cuit, setCuit] = useState("");
+  const [domicilioFiscal, setDomicilioFiscal] = useState("");
+  const [localidad, setLocalidad] = useState("");
+  const [provincia, setProvincia] = useState("");
+  const [tipoContrato, setTipoContrato] = useState(TIPOS_CONTRATO[0]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
   const load = () => {
     setLoading(true);
-    supabase.from("clientes").select("id, nombre, tipo, mes_inicio_ejercicio").order("nombre")
+    supabase.from("clientes").select("*").order("nombre")
       .then(({ data, error }) => { if (error) setError(error.message); else setClientes(data || []); setLoading(false); });
   };
   useEffect(load, []);
 
+  const resetForm = () => {
+    setNombre(""); setTipo(CLIENT_TYPES[0]); setMesInicio(1);
+    setNombreContacto(""); setTelefonoContacto(""); setEmailContacto("");
+    setCuit(""); setDomicilioFiscal(""); setLocalidad(""); setProvincia("");
+    setTipoContrato(TIPOS_CONTRATO[0]);
+  };
+
   const addCliente = async () => {
     if (!nombre.trim()) return;
     setSaving(true); setError("");
-    const { error } = await supabase.from("clientes").insert({ nombre: nombre.trim(), tipo, mes_inicio_ejercicio: mesInicio });
+    const { error } = await supabase.from("clientes").insert({
+      nombre: nombre.trim(), tipo, mes_inicio_ejercicio: mesInicio,
+      nombre_contacto: nombreContacto.trim() || null,
+      telefono_contacto: telefonoContacto.trim() || null,
+      email_contacto: emailContacto.trim() || null,
+      cuit: cuit.trim() || null,
+      domicilio_fiscal: domicilioFiscal.trim() || null,
+      localidad: localidad.trim() || null,
+      provincia: provincia.trim() || null,
+      tipo_contrato: tipoContrato,
+    });
     setSaving(false);
     if (error) { setError(error.message); return; }
-    setNombre(""); setTipo(CLIENT_TYPES[0]); setMesInicio(1);
+    resetForm();
     load();
   };
 
@@ -727,11 +765,57 @@ function ClientesView() {
           </div>
         </div>
 
+        <div style={{ fontSize: 12, fontWeight: 500, color: "var(--muted)", margin: "18px 0 10px", paddingTop: 14, borderTop: "1px solid var(--border)" }}>
+          Datos de contacto y comerciales (opcional)
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+          <div>
+            <label style={labelStyle}>Nombre de contacto</label>
+            <input value={nombreContacto} onChange={(e) => setNombreContacto(e.target.value)} style={inputStyle} />
+          </div>
+          <div>
+            <label style={labelStyle}>Teléfono de contacto</label>
+            <input value={telefonoContacto} onChange={(e) => setTelefonoContacto(e.target.value)} style={inputStyle} />
+          </div>
+        </div>
+
+        <label style={{ ...labelStyle, marginTop: 14 }}>Email de contacto</label>
+        <input type="email" value={emailContacto} onChange={(e) => setEmailContacto(e.target.value)} style={inputStyle} />
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginTop: 14 }}>
+          <div>
+            <label style={labelStyle}>CUIT</label>
+            <input value={cuit} onChange={(e) => setCuit(e.target.value)} placeholder="30-12345678-9" style={inputStyle} />
+          </div>
+          <div>
+            <label style={labelStyle}>Tipo de contrato</label>
+            <select value={tipoContrato} onChange={(e) => setTipoContrato(e.target.value)} style={inputStyle}>
+              {TIPOS_CONTRATO.map((t) => <option key={t} value={t}>{t}</option>)}
+            </select>
+          </div>
+        </div>
+
+        <label style={{ ...labelStyle, marginTop: 14 }}>Domicilio fiscal</label>
+        <input value={domicilioFiscal} onChange={(e) => setDomicilioFiscal(e.target.value)} style={inputStyle} />
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginTop: 14 }}>
+          <div>
+            <label style={labelStyle}>Localidad</label>
+            <input value={localidad} onChange={(e) => setLocalidad(e.target.value)} style={inputStyle} />
+          </div>
+          <div>
+            <label style={labelStyle}>Provincia</label>
+            <input value={provincia} onChange={(e) => setProvincia(e.target.value)} style={inputStyle} />
+          </div>
+        </div>
+
         {error && <div style={{ marginTop: 12, fontSize: 12.5, color: "#A13333", background: "#FBE7E7", padding: "8px 10px", borderRadius: 8 }}>{error}</div>}
 
         <button onClick={addCliente} disabled={!nombre.trim() || saving} style={{ ...btnPrimary(!!nombre.trim()), marginTop: 16 }}>
           <Plus size={16} /> {saving ? "Guardando..." : "Crear cliente"}
         </button>
+        <div style={{ fontSize: 11.5, color: "var(--muted)", marginTop: 8 }}>El contrato (archivo) se adjunta después de crear el cliente, abriendo su ficha abajo.</div>
       </div>
 
       {loading ? (
@@ -741,14 +825,81 @@ function ClientesView() {
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           {clientes.map((c) => (
-            <div key={c.id} style={{ ...cardStyle, padding: "12px 14px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-              <div>
-                <div style={{ fontSize: 14, fontWeight: 500, color: "var(--ink)" }}>{c.nombre}</div>
-                <div style={{ fontSize: 12, color: "var(--muted)" }}>{c.tipo}</div>
-              </div>
-              <div style={{ fontSize: 12, color: "var(--muted)" }}>Ejercicio desde {MESES[c.mes_inicio_ejercicio - 1]}</div>
-            </div>
+            <ClienteCard key={c.id} c={c} expanded={expandedId === c.id} onToggle={() => setExpandedId(expandedId === c.id ? null : c.id)} onChanged={load} />
           ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ClienteCard({ c, expanded, onToggle, onChanged }) {
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState("");
+
+  const handleFile = async (e) => {
+    const file = e.target.files[0];
+    e.target.value = "";
+    if (!file) return;
+    setUploading(true); setUploadError("");
+    const safeName = file.name.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-zA-Z0-9.\-_]/g, "_");
+    const path = `${c.id}/${Date.now()}-${safeName}`;
+    const { error: upErr } = await supabase.storage.from("contratos").upload(path, file);
+    if (upErr) { setUploadError(upErr.message); setUploading(false); return; }
+    await supabase.from("clientes").update({ contrato_ruta: path }).eq("id", c.id);
+    setUploading(false);
+    onChanged();
+  };
+
+  const viewContrato = async () => {
+    if (!c.contrato_ruta) return;
+    const { data, error } = await supabase.storage.from("contratos").createSignedUrl(c.contrato_ruta, 60);
+    if (!error && data) window.open(data.signedUrl, "_blank");
+  };
+
+  return (
+    <div style={cardStyle}>
+      <button onClick={onToggle} style={{
+        width: "100%", textAlign: "left", background: "transparent", border: "none", cursor: "pointer",
+        padding: "12px 14px", display: "flex", alignItems: "center", justifyContent: "space-between", fontFamily: "var(--font-body)",
+      }}>
+        <div>
+          <div style={{ fontSize: 14, fontWeight: 500, color: "var(--ink)" }}>{c.nombre}</div>
+          <div style={{ fontSize: 12, color: "var(--muted)" }}>{c.tipo}</div>
+        </div>
+        <div style={{ fontSize: 12, color: "var(--muted)" }}>Ejercicio desde {MESES[c.mes_inicio_ejercicio - 1]}</div>
+      </button>
+
+      {expanded && (
+        <div style={{ padding: "0 14px 16px", borderTop: "1px solid var(--border)" }}>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 20, fontSize: 13, margin: "14px 0" }}>
+            <Field label="Contacto" value={c.nombre_contacto || "—"} />
+            <Field label="Teléfono" value={c.telefono_contacto || "—"} />
+            <Field label="Email" value={c.email_contacto || "—"} />
+            <Field label="CUIT" value={c.cuit || "—"} />
+            <Field label="Tipo de contrato" value={c.tipo_contrato || "—"} />
+            <Field label="Domicilio fiscal" value={c.domicilio_fiscal || "—"} />
+            <Field label="Localidad" value={c.localidad || "—"} />
+            <Field label="Provincia" value={c.provincia || "—"} />
+          </div>
+
+          <div style={{ fontSize: 12, fontWeight: 500, color: "var(--muted)", marginBottom: 8 }}>Contrato</div>
+          {c.contrato_ruta ? (
+            <button onClick={viewContrato} style={{
+              display: "flex", alignItems: "center", gap: 8, padding: "7px 10px", borderRadius: 8,
+              border: "1px solid var(--border)", background: "var(--surface)", cursor: "pointer",
+              fontSize: 12.5, color: "var(--ink)", fontFamily: "var(--font-body)", marginBottom: 8,
+            }}>
+              <FileText size={14} color="var(--muted)" /> Ver contrato adjunto
+            </button>
+          ) : (
+            <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 8 }}>Todavía no hay contrato adjunto.</div>
+          )}
+          <label style={{ fontSize: 12, fontWeight: 500, color: "var(--primary-dark)", cursor: uploading ? "default" : "pointer", display: "flex", alignItems: "center", gap: 5 }}>
+            <Paperclip size={13} /> {uploading ? "Subiendo..." : (c.contrato_ruta ? "Reemplazar contrato" : "Adjuntar contrato")}
+            <input type="file" onChange={handleFile} disabled={uploading} style={{ display: "none" }} />
+          </label>
+          {uploadError && <div style={{ marginTop: 8, fontSize: 12, color: "#A13333", background: "#FBE7E7", padding: "6px 10px", borderRadius: 8 }}>{uploadError}</div>}
         </div>
       )}
     </div>
