@@ -1253,35 +1253,51 @@ function ReglasView({ perfil }) {
 const SIDEBAR_WIDTH = 232;
 
 function buildNavGroups(perfil) {
-  const groups = [
-    { key: "auditoria", label: "Auditoría", items: [
-      ["nuevo", "Nuevo caso", Plus],
-      ["casos", "Casos", ClipboardList],
-    ] },
-    { key: "padron", label: "Padrón", items: [
-      ["padron", "Padrón", Users],
-    ] },
-    { key: "censos", label: "Censos y relevamientos", items: [
-      ["censo-camas", "Censo de camas", BedDouble],
-    ] },
-    { key: "facturacion", label: "Facturación y recuperos", items: [
-      ["facturacion", "Facturación", Receipt],
-    ] },
-    { key: "traslados", label: "Traslados", items: [
-      ["traslados", "Traslados", Ambulance],
-    ] },
-  ];
+  const groups = [];
 
-  if (perfil.rol !== "Cliente") {
-    groups.push({ key: "bi", label: "Business Intelligence", items: [
-      ["bi", "Tablero", BarChart3],
+  if (perfil.rol === "Administrador" || perfil.rol === "Administrador Cliente") {
+    const adminItems = [];
+    if (perfil.rol === "Administrador") {
+      adminItems.push({
+        key: "clientes", label: "Clientes", icon: Building2, view: "clientes",
+        children: [
+          { key: "padron", label: "Padrón", icon: Users, view: "padron" },
+          { key: "reglas", label: "Reglas del cliente", icon: ShieldCheck, view: "reglas" },
+        ],
+      });
+    } else {
+      adminItems.push({ key: "reglas", label: "Reglas del cliente", icon: ShieldCheck, view: "reglas" });
+    }
+    groups.push({ key: "admin", label: "Administración", items: adminItems });
+  }
+
+  groups.push({ key: "auditoria", label: "Auditoría", items: [
+    { key: "nuevo", label: "Nuevo caso", icon: Plus, view: "nuevo" },
+    { key: "casos", label: "Casos", icon: ClipboardList, view: "casos" },
+  ] });
+
+  if (perfil.rol !== "Administrador") {
+    groups.push({ key: "padron", label: "Padrón", items: [
+      { key: "padron", label: "Padrón", icon: Users, view: "padron" },
     ] });
   }
 
-  const admin = [];
-  if (perfil.rol === "Administrador") admin.push(["clientes", "Clientes", Building2]);
-  if (perfil.rol === "Administrador" || perfil.rol === "Administrador Cliente") admin.push(["reglas", "Reglas", ShieldCheck]);
-  if (admin.length) groups.push({ key: "admin", label: "Administración", items: admin });
+  groups.push({ key: "censos", label: "Censos y relevamientos", items: [
+    { key: "censo-camas", label: "Censo de camas", icon: BedDouble, view: "censo-camas" },
+  ] });
+  groups.push({ key: "facturacion", label: "Facturación y recuperos", items: [
+    { key: "facturacion", label: "Facturación", icon: Receipt, view: "facturacion" },
+  ] });
+  groups.push({ key: "traslados", label: "Traslados", items: [
+    { key: "traslados", label: "Traslados", icon: Ambulance, view: "traslados" },
+  ] });
+
+  if (perfil.rol !== "Cliente") {
+    groups.push({ key: "bi", label: "Business Intelligence", items: [
+      { key: "bi", label: "Tablero", icon: BarChart3, view: "bi" },
+    ] });
+  }
+
   return groups;
 }
 
@@ -1329,22 +1345,48 @@ function Sidebar({ perfil, view, setView }) {
               </button>
               {!isCollapsed && (
                 <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-                  {g.items.map(([key, label, Icon]) => {
-                    const active = view === key;
+                  {g.items.map((item) => {
+                    const { key, label, icon: Icon, view: itemView, children } = item;
+                    const active = view === itemView;
+                    const childActive = children?.some((c) => c.view === view);
                     return (
-                      <button
-                        key={key}
-                        onClick={() => setView(key)}
-                        style={{
-                          display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", borderRadius: 8,
-                          border: "none", cursor: "pointer", textAlign: "left",
-                          fontSize: 13.5, fontWeight: 500, fontFamily: "var(--font-body)",
-                          background: active ? "var(--primary-tint)" : "transparent",
-                          color: active ? "var(--primary-dark)" : "var(--ink)",
-                        }}
-                      >
-                        <Icon size={16} /> {label}
-                      </button>
+                      <div key={key}>
+                        <button
+                          onClick={() => setView(itemView)}
+                          style={{
+                            width: "100%", display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", borderRadius: 8,
+                            border: "none", cursor: "pointer", textAlign: "left",
+                            fontSize: 13.5, fontWeight: 500, fontFamily: "var(--font-body)",
+                            background: active ? "var(--primary-tint)" : "transparent",
+                            color: (active || childActive) ? "var(--primary-dark)" : "var(--ink)",
+                          }}
+                        >
+                          <Icon size={16} /> {label}
+                        </button>
+                        {children && (
+                          <div style={{ display: "flex", flexDirection: "column", gap: 2, marginTop: 2 }}>
+                            {children.map((c) => {
+                              const CIcon = c.icon;
+                              const cActive = view === c.view;
+                              return (
+                                <button
+                                  key={c.key}
+                                  onClick={() => setView(c.view)}
+                                  style={{
+                                    display: "flex", alignItems: "center", gap: 9, padding: "8px 12px 8px 30px", borderRadius: 8,
+                                    border: "none", cursor: "pointer", textAlign: "left",
+                                    fontSize: 13, fontWeight: 500, fontFamily: "var(--font-body)",
+                                    background: cActive ? "var(--primary-tint)" : "transparent",
+                                    color: cActive ? "var(--primary-dark)" : "var(--muted)",
+                                  }}
+                                >
+                                  <CIcon size={14} /> {c.label}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
                     );
                   })}
                 </div>
@@ -1400,7 +1442,7 @@ function AppShell({ session }) {
   if (!perfil || !view) return <div style={{ minHeight: "100vh", background: "var(--bg)" }} />;
 
   const VIEW_TITLES = {
-    padron: "Padrón", nuevo: "Nuevo caso", casos: "Casos", clientes: "Clientes", reglas: "Reglas",
+    padron: "Padrón", nuevo: "Nuevo caso", casos: "Casos", clientes: "Clientes", reglas: "Reglas del cliente",
     "censo-camas": "Censo de camas", facturacion: "Facturación y recuperos", traslados: "Traslados", bi: "Business Intelligence",
   };
 
