@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import {
   ClipboardList, Plus, LogOut, Users, AlertTriangle,
   Clock, Search, Inbox, Paperclip, FileText, Building2, ShieldCheck,
+  ChevronDown, ChevronRight,
 } from "lucide-react";
 import { supabase } from "./supabaseClient";
 import {
@@ -188,16 +189,21 @@ function CatalogPicker({ catalogoKey, onChange, canManage }) {
   if (loading) return <div style={{ fontSize: 13, color: "var(--muted)" }}>Cargando...</div>;
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-      {levels.map((lvl, depth) => (
-        <select key={depth} value={lvl.selected} onChange={(e) => selectAt(depth, e.target.value)} style={inputStyle}>
-          <option value="">Seleccionar...</option>
-          {lvl.items.map((it) => <option key={it.id} value={it.id}>{it.nombre}</option>)}
-          {canManage && <option value="__new__">+ Agregar</option>}
-        </select>
-      ))}
+    <div>
+      <div style={{ display: "flex", gap: 8, overflowX: "auto", paddingBottom: 4 }}>
+        {levels.map((lvl, depth) => (
+          <select
+            key={depth} value={lvl.selected} onChange={(e) => selectAt(depth, e.target.value)}
+            style={{ ...inputStyle, flex: "0 0 200px", width: 200 }}
+          >
+            <option value="">Seleccionar...</option>
+            {lvl.items.map((it) => <option key={it.id} value={it.id}>{it.nombre}</option>)}
+            {canManage && <option value="__new__">+ Agregar</option>}
+          </select>
+        ))}
+      </div>
       {showAdd && (
-        <div style={{ display: "flex", gap: 8 }}>
+        <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
           <input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="Nombre" style={{ ...inputStyle, flex: 1 }} />
           <button onClick={addItem} disabled={!newName.trim()} style={btnPrimary(!!newName.trim())}>Agregar</button>
         </div>
@@ -305,7 +311,7 @@ function NewCaseView({ perfil, onCreated, goTo }) {
   };
 
   return (
-    <div style={{ maxWidth: 560, margin: "0 auto", padding: "28px 24px" }}>
+    <div style={{ maxWidth: 920, margin: "0 auto", padding: "28px 32px" }}>
       <h2 style={{ fontFamily: "var(--font-display)", fontWeight: 600, fontSize: 19, color: "var(--ink)", marginBottom: 4 }}>Nuevo caso</h2>
       <p style={{ fontSize: 13, color: "var(--muted)", marginBottom: 24 }}>El plazo de respuesta y el auditor se calculan solos.</p>
 
@@ -321,42 +327,44 @@ function NewCaseView({ perfil, onCreated, goTo }) {
         </div>
       )}
 
-      {!isClientSide && (
-        <>
-          <label style={labelStyle}>Solicitante</label>
-          <select value={clienteId} onChange={(e) => setClienteId(e.target.value)} style={inputStyle}>
-            <option value="">Seleccionar cliente...</option>
-            {clientes.map((c) => <option key={c.id} value={c.id}>{c.nombre} · {c.tipo}</option>)}
-          </select>
-        </>
-      )}
+      <div style={{ display: "grid", gridTemplateColumns: isClientSide ? "1fr" : "1fr 1fr", gap: 14 }}>
+        {!isClientSide && (
+          <div>
+            <label style={labelStyle}>Solicitante</label>
+            <select value={clienteId} onChange={(e) => setClienteId(e.target.value)} style={inputStyle}>
+              <option value="">Seleccionar cliente...</option>
+              {clientes.map((c) => <option key={c.id} value={c.id}>{c.nombre} · {c.tipo}</option>)}
+            </select>
+          </div>
+        )}
 
-      {clienteId && (
-        <div style={{ marginTop: 14 }}>
-          <label style={labelStyle}>Afiliado</label>
-          <select
-            value={showNewAffiliate ? "__new__" : afiliadoId}
-            onChange={(e) => { if (e.target.value === "__new__") { setShowNewAffiliate(true); return; } setShowNewAffiliate(false); setAfiliadoId(e.target.value); }}
-            style={inputStyle}
-          >
-            <option value="">Seleccionar afiliado...</option>
-            {afiliados.map((a) => <option key={a.id} value={a.id}>{a.nombre}{a.numero_afiliado ? " · N° " + a.numero_afiliado : ""}{a.estado === "Baja" ? " (Baja)" : ""}</option>)}
-            {canManagePadron && <option value="__new__">+ Agregar afiliado al padrón</option>}
-          </select>
-          {afiliado?.estado === "Baja" && (
-            <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8, padding: "8px 12px", background: "#FAEEDA", color: "#633806", borderRadius: 8, fontSize: 12.5 }}>
-              <AlertTriangle size={15} /> Este afiliado figura de baja en el padrón.
-            </div>
-          )}
-          {showNewAffiliate && (
-            <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
-              <input value={newAffName} onChange={(e) => setNewAffName(e.target.value)} placeholder="Nombre del afiliado" style={{ ...inputStyle, flex: "1 1 180px" }} />
-              <input value={newAffNumber} onChange={(e) => setNewAffNumber(e.target.value)} placeholder="N° de afiliado" style={{ ...inputStyle, width: 130 }} />
-              <button onClick={addAffiliate} disabled={!newAffName.trim()} style={btnPrimary(!!newAffName.trim())}>Agregar</button>
-            </div>
-          )}
-        </div>
-      )}
+        {clienteId && (
+          <div>
+            <label style={labelStyle}>Afiliado</label>
+            <select
+              value={showNewAffiliate ? "__new__" : afiliadoId}
+              onChange={(e) => { if (e.target.value === "__new__") { setShowNewAffiliate(true); return; } setShowNewAffiliate(false); setAfiliadoId(e.target.value); }}
+              style={inputStyle}
+            >
+              <option value="">Seleccionar afiliado...</option>
+              {afiliados.map((a) => <option key={a.id} value={a.id}>{a.nombre}{a.numero_afiliado ? " · N° " + a.numero_afiliado : ""}{a.estado === "Baja" ? " (Baja)" : ""}</option>)}
+              {canManagePadron && <option value="__new__">+ Agregar afiliado al padrón</option>}
+            </select>
+            {afiliado?.estado === "Baja" && (
+              <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8, padding: "8px 12px", background: "#FAEEDA", color: "#633806", borderRadius: 8, fontSize: 12.5 }}>
+                <AlertTriangle size={15} /> Este afiliado figura de baja en el padrón.
+              </div>
+            )}
+            {showNewAffiliate && (
+              <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
+                <input value={newAffName} onChange={(e) => setNewAffName(e.target.value)} placeholder="Nombre del afiliado" style={{ ...inputStyle, flex: "1 1 180px" }} />
+                <input value={newAffNumber} onChange={(e) => setNewAffNumber(e.target.value)} placeholder="N° de afiliado" style={{ ...inputStyle, width: 130 }} />
+                <button onClick={addAffiliate} disabled={!newAffName.trim()} style={btnPrimary(!!newAffName.trim())}>Agregar</button>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginTop: 14 }}>
         <div>
@@ -1240,6 +1248,99 @@ function ReglasView({ perfil }) {
 }
 
 
+/* ---------- sidebar ---------- */
+
+const SIDEBAR_WIDTH = 232;
+
+function buildNavGroups(perfil) {
+  const groups = [
+    { key: "trabajo", label: "Trabajo", items: [
+      ["nuevo", "Nuevo caso", Plus],
+      ["casos", "Casos", ClipboardList],
+    ] },
+    { key: "datos", label: "Datos", items: [
+      ["padron", "Padrón", Users],
+    ] },
+  ];
+  const admin = [];
+  if (perfil.rol === "Administrador") admin.push(["clientes", "Clientes", Building2]);
+  if (perfil.rol === "Administrador" || perfil.rol === "Administrador Cliente") admin.push(["reglas", "Reglas", ShieldCheck]);
+  if (admin.length) groups.push({ key: "admin", label: "Administración", items: admin });
+  return groups;
+}
+
+function Sidebar({ perfil, view, setView }) {
+  const groups = buildNavGroups(perfil);
+
+  const [collapsed, setCollapsed] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("da_salud_nav_collapsed") || "{}"); } catch { return {}; }
+  });
+  const toggleGroup = (key) => {
+    setCollapsed((prev) => {
+      const next = { ...prev, [key]: !prev[key] };
+      try { localStorage.setItem("da_salud_nav_collapsed", JSON.stringify(next)); } catch { /* ignore */ }
+      return next;
+    });
+  };
+
+  return (
+    <aside style={{
+      width: SIDEBAR_WIDTH, flex: `0 0 ${SIDEBAR_WIDTH}px`, minHeight: "100vh",
+      background: "var(--surface)", borderRight: "1px solid var(--border)",
+      display: "flex", flexDirection: "column", padding: "20px 12px",
+    }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "0 8px 22px" }}>
+        <img src="/logo.png" alt="DA Salud" style={{ height: 30, width: "auto" }} />
+        <div style={{ fontFamily: "var(--font-display)", fontWeight: 600, fontSize: 16, color: "var(--ink)" }}>DA Salud</div>
+      </div>
+
+      <nav style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+        {groups.map((g) => {
+          const isCollapsed = !!collapsed[g.key];
+          return (
+            <div key={g.key} style={{ marginBottom: 4 }}>
+              <button
+                onClick={() => toggleGroup(g.key)}
+                style={{
+                  width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between",
+                  padding: "8px 8px", border: "none", background: "transparent", cursor: "pointer",
+                  fontSize: 11, fontWeight: 600, letterSpacing: "0.04em", textTransform: "uppercase",
+                  color: "var(--muted)", fontFamily: "var(--font-body)",
+                }}
+              >
+                {g.label}
+                {isCollapsed ? <ChevronRight size={13} /> : <ChevronDown size={13} />}
+              </button>
+              {!isCollapsed && (
+                <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                  {g.items.map(([key, label, Icon]) => {
+                    const active = view === key;
+                    return (
+                      <button
+                        key={key}
+                        onClick={() => setView(key)}
+                        style={{
+                          display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", borderRadius: 8,
+                          border: "none", cursor: "pointer", textAlign: "left",
+                          fontSize: 13.5, fontWeight: 500, fontFamily: "var(--font-body)",
+                          background: active ? "var(--primary-tint)" : "transparent",
+                          color: active ? "var(--primary-dark)" : "var(--ink)",
+                        }}
+                      >
+                        <Icon size={16} /> {label}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </nav>
+    </aside>
+  );
+}
+
 function AppShell({ session }) {
   const [perfil, setPerfil] = useState(null);
   const [view, setViewRaw] = useState(null);
@@ -1265,59 +1366,48 @@ function AppShell({ session }) {
 
   if (!perfil || !view) return <div style={{ minHeight: "100vh", background: "var(--bg)" }} />;
 
-  const NAV = [
-    ["padron", "Padrón", Users],
-    ["nuevo", "Nuevo caso", Plus],
-    ["casos", "Casos", ClipboardList],
-  ];
-  if (perfil.rol === "Administrador") NAV.push(["clientes", "Clientes", Building2]);
-  if (perfil.rol === "Administrador" || perfil.rol === "Administrador Cliente") NAV.push(["reglas", "Reglas", ShieldCheck]);
+  const VIEW_TITLES = {
+    padron: "Padrón", nuevo: "Nuevo caso", casos: "Casos", clientes: "Clientes", reglas: "Reglas",
+  };
 
   return (
-    <div style={{ minHeight: "100vh", background: "var(--bg)" }}>
-      <header style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 24px", borderBottom: "1px solid var(--border)", background: "var(--surface)", flexWrap: "wrap", gap: 12 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <img src="/logo.png" alt="DA Salud" style={{ height: 28, width: "auto" }} />
-          <div style={{ fontFamily: "var(--font-display)", fontWeight: 600, fontSize: 15.5, color: "var(--ink)" }}>DA Salud</div>
-        </div>
+    <div style={{ minHeight: "100vh", background: "var(--bg)", display: "flex" }}>
+      <Sidebar perfil={perfil} view={view} setView={setView} />
 
-        <nav style={{ display: "flex", gap: 4 }}>
-          {NAV.map(([key, label, Icon]) => (
-            <button key={key} onClick={() => setView(key)} style={{
-              display: "flex", alignItems: "center", gap: 6, padding: "8px 13px", borderRadius: 8, border: "none", cursor: "pointer",
-              fontSize: 13, fontWeight: 500, fontFamily: "var(--font-body)",
-              background: view === key ? "var(--primary-tint)" : "transparent", color: view === key ? "var(--primary-dark)" : "var(--muted)",
-            }}>
-              <Icon size={15} /> {label}
-            </button>
-          ))}
-        </nav>
-
-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          {perfil.cliente_nombre && (
-            <div style={{
-              display: "flex", alignItems: "center", gap: 6, padding: "6px 12px", borderRadius: 20,
-              background: "var(--primary-tint)", border: "1px solid var(--primary)",
-            }}>
-              <Building2 size={13} color="var(--primary-dark)" />
-              <span style={{ fontSize: 12, fontWeight: 600, color: "var(--primary-dark)" }}>{perfil.cliente_nombre}</span>
-            </div>
-          )}
-          <div style={{ textAlign: "right" }}>
-            <div style={{ fontSize: 12.5, fontWeight: 500, color: "var(--ink)" }}>{perfil.nombre}</div>
-            <div style={{ fontSize: 11, color: "var(--muted)" }}>{perfil.rol}</div>
+      <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
+        <header style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 28px", borderBottom: "1px solid var(--border)", background: "var(--surface)", flexWrap: "wrap", gap: 12 }}>
+          <div style={{ fontFamily: "var(--font-display)", fontWeight: 600, fontSize: 16, color: "var(--ink)" }}>
+            {VIEW_TITLES[view]}
           </div>
-          <button onClick={() => supabase.auth.signOut()} style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 12px", borderRadius: 8, border: "1px solid var(--border)", background: "transparent", cursor: "pointer", fontSize: 12.5, fontFamily: "var(--font-body)" }}>
-            <LogOut size={14} /> Salir
-          </button>
-        </div>
-      </header>
 
-      {view === "padron" && <PadronView />}
-      {view === "nuevo" && <NewCaseView perfil={perfil} goTo={setView} onCreated={() => setRefreshKey((k) => k + 1)} />}
-      {view === "casos" && <CasesView refreshKey={refreshKey} perfil={perfil} />}
-      {view === "clientes" && <ClientesView />}
-      {view === "reglas" && <ReglasView perfil={perfil} />}
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            {perfil.cliente_nombre && (
+              <div style={{
+                display: "flex", alignItems: "center", gap: 6, padding: "6px 12px", borderRadius: 20,
+                background: "var(--primary-tint)", border: "1px solid var(--primary)",
+              }}>
+                <Building2 size={13} color="var(--primary-dark)" />
+                <span style={{ fontSize: 12, fontWeight: 600, color: "var(--primary-dark)" }}>{perfil.cliente_nombre}</span>
+              </div>
+            )}
+            <div style={{ textAlign: "right" }}>
+              <div style={{ fontSize: 12.5, fontWeight: 500, color: "var(--ink)" }}>{perfil.nombre}</div>
+              <div style={{ fontSize: 11, color: "var(--muted)" }}>{perfil.rol}</div>
+            </div>
+            <button onClick={() => supabase.auth.signOut()} style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 12px", borderRadius: 8, border: "1px solid var(--border)", background: "transparent", cursor: "pointer", fontSize: 12.5, fontFamily: "var(--font-body)" }}>
+              <LogOut size={14} /> Salir
+            </button>
+          </div>
+        </header>
+
+        <div style={{ flex: 1, minWidth: 0 }}>
+          {view === "padron" && <PadronView />}
+          {view === "nuevo" && <NewCaseView perfil={perfil} goTo={setView} onCreated={() => setRefreshKey((k) => k + 1)} />}
+          {view === "casos" && <CasesView refreshKey={refreshKey} perfil={perfil} />}
+          {view === "clientes" && <ClientesView />}
+          {view === "reglas" && <ReglasView perfil={perfil} />}
+        </div>
+      </div>
     </div>
   );
 }
