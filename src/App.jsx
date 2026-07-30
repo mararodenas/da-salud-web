@@ -128,7 +128,7 @@ const AFILIADO_CAMPOS = [
 ];
 
 function emptyAfiliadoForm() {
-  return { nombre: "", dni: "", fecha_nacimiento: "", numero_afiliado: "", provincia: "", localidad: "", domicilio: "", telefono_celular: "", email: "", plan_contratado: "", estado: "Activo" };
+  return { nombre: "", dni: "", fecha_nacimiento: "", numero_afiliado: "", provincia: "", localidad: "", domicilio: "", telefono_celular: "", email: "", plan_contratado: "", estado: "Activo", titular_id: "" };
 }
 
 function PadronView({ perfil }) {
@@ -164,7 +164,7 @@ function PadronView({ perfil }) {
     if (!clienteId) { setAfiliados([]); return; }
     setLoading(true); setError("");
     supabase.from("afiliados")
-      .select("id, nombre, dni, fecha_nacimiento, numero_afiliado, provincia, localidad, domicilio, telefono_celular, email, plan_contratado, estado")
+      .select("id, nombre, dni, fecha_nacimiento, numero_afiliado, provincia, localidad, domicilio, telefono_celular, email, plan_contratado, estado, titular_id")
       .eq("cliente_id", clienteId).order("nombre")
       .then(({ data, error }) => {
         if (error) setError(error.message); else setAfiliados(data || []);
@@ -188,7 +188,7 @@ function PadronView({ perfil }) {
       nombre: a.nombre || "", dni: a.dni || "", fecha_nacimiento: a.fecha_nacimiento || "",
       numero_afiliado: a.numero_afiliado || "", provincia: a.provincia || "", localidad: a.localidad || "",
       domicilio: a.domicilio || "", telefono_celular: a.telefono_celular || "", email: a.email || "",
-      plan_contratado: a.plan_contratado || "", estado: a.estado || "Activo",
+      plan_contratado: a.plan_contratado || "", estado: a.estado || "Activo", titular_id: a.titular_id || "",
     });
     setFormError(""); setShowBulk(false); setShowForm(true);
   };
@@ -197,7 +197,7 @@ function PadronView({ perfil }) {
   const guardarAfiliado = async () => {
     if (!form.nombre.trim() || !clienteId) return;
     setSaving(true); setFormError("");
-    const payload = { ...form, cliente_id: clienteId, fecha_nacimiento: form.fecha_nacimiento || null };
+    const payload = { ...form, cliente_id: clienteId, fecha_nacimiento: form.fecha_nacimiento || null, titular_id: form.titular_id || null };
     const { error } = editingId
       ? await supabase.from("afiliados").update(payload).eq("id", editingId)
       : await supabase.from("afiliados").insert(payload);
@@ -349,6 +349,18 @@ function PadronView({ perfil }) {
                     <option value="Baja">Baja</option>
                   </select>
                 </div>
+                <div style={{ gridColumn: "1 / -1" }}>
+                  <label style={labelStyle}>Grupo familiar — Titular</label>
+                  <select value={form.titular_id} onChange={(e) => setCampo("titular_id", e.target.value)} style={inputStyle}>
+                    <option value="">Es titular / independiente</option>
+                    {afiliados.filter((a) => !a.titular_id && a.id !== editingId).map((a) => (
+                      <option key={a.id} value={a.id}>{a.nombre}{a.dni ? " · DNI " + a.dni : ""}</option>
+                    ))}
+                  </select>
+                  <div style={{ fontSize: 11.5, color: "var(--muted)", marginTop: 4 }}>
+                    Para menores u otros integrantes de un grupo familiar, elegí quién es el titular (padre/madre/tutor). Dejalo en "Es titular" si esta persona no depende de nadie.
+                  </div>
+                </div>
               </div>
 
               {formError && <div style={{ marginTop: 12, fontSize: 12.5, color: "#A13333", background: "#FBE7E7", padding: "8px 10px", borderRadius: 8 }}>{formError}</div>}
@@ -372,12 +384,15 @@ function PadronView({ perfil }) {
                     <tr>
                       {AFILIADO_CAMPOS.map(([campo, label]) => <th key={campo} style={thStyle}>{label}</th>)}
                       <th style={thStyle}>Edad</th>
+                      <th style={thStyle}>Titular</th>
                       <th style={thStyle}>Estado</th>
                     </tr>
                   </thead>
                   <tbody>
                     {filtrados.map((a) => {
                       const edad = calcularEdad(a.fecha_nacimiento);
+                      const esMenor = edad !== null && edad < 18;
+                      const titular = a.titular_id ? afiliados.find((x) => x.id === a.titular_id) : null;
                       return (
                         <tr
                           key={a.id}
@@ -396,7 +411,11 @@ function PadronView({ perfil }) {
                           <td style={tdStyle}>{a.telefono_celular || "—"}</td>
                           <td style={tdStyle}>{a.email || "—"}</td>
                           <td style={tdStyle}>{a.plan_contratado || "—"}</td>
-                          <td style={tdStyle}>{edad === null ? "—" : edad}</td>
+                          <td style={tdStyle}>
+                            {edad === null ? "—" : edad}
+                            {esMenor && <span style={{ marginLeft: 6 }}><Pill bg="#FAEEDA" fg="#633806">Menor</Pill></span>}
+                          </td>
+                          <td style={tdStyle}>{titular ? titular.nombre : "—"}</td>
                           <td style={tdStyle}>
                             <Pill bg={a.estado === "Activo" ? "#EAF3DE" : "#FCEBEB"} fg={a.estado === "Activo" ? "#27500A" : "#791F1F"}>{a.estado}</Pill>
                           </td>
