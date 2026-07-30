@@ -324,7 +324,15 @@ function PadronView({ perfil }) {
           )}
 
           {showForm && (
-            <div style={{ ...cardStyle, padding: 20, marginBottom: 20 }}>
+            <div
+              onClick={() => setShowForm(false)}
+              style={{
+                position: "fixed", inset: 0, background: "rgba(15,37,71,0.4)", zIndex: 1000,
+                display: "flex", alignItems: "flex-start", justifyContent: "center",
+                padding: "40px 20px", overflowY: "auto",
+              }}
+            >
+            <div onClick={(e) => e.stopPropagation()} style={{ ...cardStyle, padding: 20, marginBottom: 20, maxWidth: 780, width: "100%" }}>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 14, marginBottom: 14, flexWrap: "wrap" }}>
                 <div style={{ fontSize: 14, fontWeight: 600, color: "var(--ink)" }}>{editingId ? "Editar afiliado" : "Nuevo afiliado"}</div>
                 <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
@@ -431,6 +439,7 @@ function PadronView({ perfil }) {
               <button onClick={guardarAfiliado} disabled={!form.nombre.trim() || saving} style={{ ...btnPrimary(!!form.nombre.trim()), marginTop: 16 }}>
                 {saving ? "Guardando..." : editingId ? "Guardar cambios" : "Agregar afiliado"}
               </button>
+            </div>
             </div>
           )}
 
