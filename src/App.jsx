@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import {
   ClipboardList, Plus, LogOut, Users, AlertTriangle,
   Clock, Search, Inbox, Paperclip, FileText, Building2, ShieldCheck,
-  ChevronDown, ChevronRight,
+  ChevronDown, ChevronRight, BedDouble, Receipt, Ambulance, BarChart3,
 } from "lucide-react";
 import { supabase } from "./supabaseClient";
 import {
@@ -1254,14 +1254,30 @@ const SIDEBAR_WIDTH = 232;
 
 function buildNavGroups(perfil) {
   const groups = [
-    { key: "trabajo", label: "Trabajo", items: [
+    { key: "auditoria", label: "Auditoría", items: [
       ["nuevo", "Nuevo caso", Plus],
       ["casos", "Casos", ClipboardList],
     ] },
-    { key: "datos", label: "Datos", items: [
+    { key: "padron", label: "Padrón", items: [
       ["padron", "Padrón", Users],
     ] },
+    { key: "censos", label: "Censos y relevamientos", items: [
+      ["censo-camas", "Censo de camas", BedDouble],
+    ] },
+    { key: "facturacion", label: "Facturación y recuperos", items: [
+      ["facturacion", "Facturación", Receipt],
+    ] },
+    { key: "traslados", label: "Traslados", items: [
+      ["traslados", "Traslados", Ambulance],
+    ] },
   ];
+
+  if (perfil.rol !== "Cliente") {
+    groups.push({ key: "bi", label: "Business Intelligence", items: [
+      ["bi", "Tablero", BarChart3],
+    ] });
+  }
+
   const admin = [];
   if (perfil.rol === "Administrador") admin.push(["clientes", "Clientes", Building2]);
   if (perfil.rol === "Administrador" || perfil.rol === "Administrador Cliente") admin.push(["reglas", "Reglas", ShieldCheck]);
@@ -1341,6 +1357,23 @@ function Sidebar({ perfil, view, setView }) {
   );
 }
 
+/* ---------- próximamente ---------- */
+
+function ProximamenteView({ titulo, descripcion }) {
+  return (
+    <div style={{ maxWidth: 560, margin: "0 auto", padding: "60px 24px", textAlign: "center" }}>
+      <div style={{
+        width: 56, height: 56, borderRadius: 16, background: "var(--primary-tint)",
+        display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 18px",
+      }}>
+        <Clock size={26} color="var(--primary-dark)" />
+      </div>
+      <h2 style={{ fontFamily: "var(--font-display)", fontWeight: 600, fontSize: 19, color: "var(--ink)", marginBottom: 8 }}>{titulo}</h2>
+      <p style={{ fontSize: 13.5, color: "var(--muted)", lineHeight: 1.6 }}>{descripcion}</p>
+    </div>
+  );
+}
+
 function AppShell({ session }) {
   const [perfil, setPerfil] = useState(null);
   const [view, setViewRaw] = useState(null);
@@ -1368,6 +1401,7 @@ function AppShell({ session }) {
 
   const VIEW_TITLES = {
     padron: "Padrón", nuevo: "Nuevo caso", casos: "Casos", clientes: "Clientes", reglas: "Reglas",
+    "censo-camas": "Censo de camas", facturacion: "Facturación y recuperos", traslados: "Traslados", bi: "Business Intelligence",
   };
 
   return (
@@ -1406,6 +1440,10 @@ function AppShell({ session }) {
           {view === "casos" && <CasesView refreshKey={refreshKey} perfil={perfil} />}
           {view === "clientes" && <ClientesView />}
           {view === "reglas" && <ReglasView perfil={perfil} />}
+          {view === "censo-camas" && <ProximamenteView titulo="Censo de camas" descripcion="Vas a poder cargar el estado de cada cama (disponible, ocupada o bloqueada) y el afiliado internado, día por día. Es lo próximo que vamos a construir." />}
+          {view === "facturacion" && <ProximamenteView titulo="Facturación y recuperos" descripcion="Control de prestaciones facturadas, validación contra lo autorizado y documentado, débitos y detección de oportunidades de recupero." />}
+          {view === "traslados" && <ProximamenteView titulo="Traslados" descripcion="Auditoría de pertinencia, coordinación, trazabilidad y control operativo de traslados programados, urgentes y de derivación." />}
+          {view === "bi" && <ProximamenteView titulo="Business Intelligence" descripcion="Tablero con indicadores de pendientes, vencidos, tiempo promedio de resolución, consumos y desvíos." />}
         </div>
       </div>
     </div>
