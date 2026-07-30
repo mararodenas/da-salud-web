@@ -122,13 +122,26 @@ function parseAfiliadosCsv(text) {
 
 const AFILIADO_CAMPOS = [
   ["nombre", "Nombre y apellido"], ["dni", "DNI"], ["fecha_nacimiento", "Fecha de nacimiento"],
-  ["numero_afiliado", "N° Afiliado"], ["provincia", "Provincia"], ["localidad", "Localidad"],
+  ["numero_afiliado", "N° Afiliado"], ["provincia", "Provincia"], ["partido", "Partido/Departamento"], ["localidad", "Localidad"],
   ["domicilio", "Domicilio"], ["telefono_celular", "Teléfono celular"], ["email", "Correo electrónico"],
   ["plan_contratado", "Plan contratado"],
 ];
 
 function emptyAfiliadoForm() {
-  return { nombre: "", dni: "", fecha_nacimiento: "", numero_afiliado: "", provincia: "", localidad: "", domicilio: "", telefono_celular: "", email: "", plan_contratado: "", estado: "Activo", titular_id: "" };
+  return { nombre: "", dni: "", fecha_nacimiento: "", numero_afiliado: "", provincia: "", partido: "", localidad: "", domicilio: "", telefono_celular: "", email: "", plan_contratado: "", estado: "Activo", titular_id: "" };
+}
+
+const GEOREF_BASE = "https://apis.datos.gob.ar/georef/api";
+
+async function georefFetch(recurso, params) {
+  try {
+    const qs = new URLSearchParams(params).toString();
+    const res = await fetch(`${GEOREF_BASE}/${recurso}?${qs}`);
+    const data = await res.json();
+    return (data[recurso] || []).map((x) => x.nombre);
+  } catch {
+    return [];
+  }
 }
 
 function PadronView({ perfil }) {
@@ -154,6 +167,24 @@ function PadronView({ perfil }) {
   const [bulkStatus, setBulkStatus] = useState("");
   const [bulkLoading, setBulkLoading] = useState(false);
 
+  const [provincias, setProvincias] = useState([]);
+  const [partidos, setPartidos] = useState([]);
+  const [localidades, setLocalidades] = useState([]);
+
+  useEffect(() => {
+    georefFetch("provincias", { campos: "nombre", max: 24, orden: "nombre" }).then(setProvincias);
+  }, []);
+
+  useEffect(() => {
+    if (!form.provincia) { setPartidos([]); return; }
+    georefFetch("departamentos", { provincia: form.provincia, campos: "nombre", max: 300, orden: "nombre" }).then(setPartidos);
+  }, [form.provincia]);
+
+  useEffect(() => {
+    if (!form.provincia || !form.partido) { setLocalidades([]); return; }
+    georefFetch("localidades", { provincia: form.provincia, departamento: form.partido, campos: "nombre", max: 500, orden: "nombre" }).then(setLocalidades);
+  }, [form.provincia, form.partido]);
+
   useEffect(() => {
     if (!isDaSalud) return;
     supabase.from("clientes").select("id, nombre").order("nombre").then(({ data }) => setClientes(data || []));
@@ -164,7 +195,7 @@ function PadronView({ perfil }) {
     if (!clienteId) { setAfiliados([]); return; }
     setLoading(true); setError("");
     supabase.from("afiliados")
-      .select("id, nombre, dni, fecha_nacimiento, numero_afiliado, provincia, localidad, domicilio, telefono_celular, email, plan_contratado, estado, titular_id")
+      .select("id, nombre, dni, fecha_nacimiento, numero_afiliado, provincia, partido, localidad, domicilio, telefono_celular, email, plan_contratado, estado, titular_id")
       .eq("cliente_id", clienteId).order("nombre")
       .then(({ data, error }) => {
         if (error) setError(error.message); else setAfiliados(data || []);
@@ -186,7 +217,7 @@ function PadronView({ perfil }) {
     setEditingId(a.id);
     setForm({
       nombre: a.nombre || "", dni: a.dni || "", fecha_nacimiento: a.fecha_nacimiento || "",
-      numero_afiliado: a.numero_afiliado || "", provincia: a.provincia || "", localidad: a.localidad || "",
+      numero_afiliado: a.numero_afiliado || "", provincia: a.provincia || "", partido: a.partido || "", localidad: a.localidad || "",
       domicilio: a.domicilio || "", telefono_celular: a.telefono_celular || "", email: a.email || "",
       plan_contratado: a.plan_contratado || "", estado: a.estado || "Activo", titular_id: a.titular_id || "",
     });
@@ -216,7 +247,7 @@ function PadronView({ perfil }) {
       const payload = filas.map((f) => ({
         cliente_id: clienteId,
         nombre: f.nombre || "", dni: f.dni || "", fecha_nacimiento: f.fecha_nacimiento || null,
-        numero_afiliado: f.numero_afiliado || "", provincia: f.provincia || "", localidad: f.localidad || "",
+        numero_afiliado: f.numero_afiliado || "", provincia: f.provincia || "", partido: f.partido || "", localidad: f.localidad || "",
         domicilio: f.domicilio || "", telefono_celular: f.telefono_celular || "", email: f.email || "",
         plan_contratado: f.plan_contratado || "", estado: f.estado || "Activo",
       }));
@@ -279,7 +310,7 @@ function PadronView({ perfil }) {
               <p style={{ fontSize: 12.5, color: "var(--muted)", marginBottom: 10, lineHeight: 1.5 }}>
                 Subí un archivo CSV con la primera fila como encabezado, con estas columnas en cualquier orden:{" "}
                 <span style={{ fontFamily: "var(--font-mono)", fontSize: 11.5 }}>
-                  nombre, dni, fecha_nacimiento, numero_afiliado, provincia, localidad, domicilio, telefono_celular, email, plan_contratado, estado
+                  nombre, dni, fecha_nacimiento, numero_afiliado, provincia, partido, localidad, domicilio, telefono_celular, email, plan_contratado, estado
                 </span>. La fecha de nacimiento en formato AAAA-MM-DD.
               </p>
               <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
@@ -294,11 +325,17 @@ function PadronView({ perfil }) {
 
           {showForm && (
             <div style={{ ...cardStyle, padding: 20, marginBottom: 20 }}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 14, marginBottom: 14, flexWrap: "wrap" }}>
                 <div style={{ fontSize: 14, fontWeight: 600, color: "var(--ink)" }}>{editingId ? "Editar afiliado" : "Nuevo afiliado"}</div>
-                <button onClick={() => setShowForm(false)} style={{ border: "none", background: "transparent", cursor: "pointer", color: "var(--muted)" }}>
-                  <X size={16} />
-                </button>
+                <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                  <div style={{ width: 170 }}>
+                    <label style={labelStyle}>Plan contratado</label>
+                    <input value={form.plan_contratado} onChange={(e) => setCampo("plan_contratado", e.target.value)} style={inputStyle} />
+                  </div>
+                  <button onClick={() => setShowForm(false)} style={{ border: "none", background: "transparent", cursor: "pointer", color: "var(--muted)", marginTop: 18 }}>
+                    <X size={16} />
+                  </button>
+                </div>
               </div>
 
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
@@ -320,11 +357,41 @@ function PadronView({ perfil }) {
                 </div>
                 <div>
                   <label style={labelStyle}>Provincia</label>
-                  <input value={form.provincia} onChange={(e) => setCampo("provincia", e.target.value)} style={inputStyle} />
+                  <select
+                    value={form.provincia}
+                    onChange={(e) => setForm((f) => ({ ...f, provincia: e.target.value, partido: "", localidad: "" }))}
+                    style={inputStyle}
+                  >
+                    <option value="">Seleccionar...</option>
+                    {(form.provincia && !provincias.includes(form.provincia)) && <option value={form.provincia}>{form.provincia}</option>}
+                    {provincias.map((p) => <option key={p} value={p}>{p}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label style={labelStyle}>Partido/Departamento</label>
+                  <select
+                    value={form.partido}
+                    onChange={(e) => setForm((f) => ({ ...f, partido: e.target.value, localidad: "" }))}
+                    style={inputStyle}
+                    disabled={!form.provincia}
+                  >
+                    <option value="">{form.provincia ? "Seleccionar..." : "Elegí primero la provincia"}</option>
+                    {(form.partido && !partidos.includes(form.partido)) && <option value={form.partido}>{form.partido}</option>}
+                    {partidos.map((p) => <option key={p} value={p}>{p}</option>)}
+                  </select>
                 </div>
                 <div>
                   <label style={labelStyle}>Localidad</label>
-                  <input value={form.localidad} onChange={(e) => setCampo("localidad", e.target.value)} style={inputStyle} />
+                  <select
+                    value={form.localidad}
+                    onChange={(e) => setCampo("localidad", e.target.value)}
+                    style={inputStyle}
+                    disabled={!form.partido}
+                  >
+                    <option value="">{form.partido ? "Seleccionar..." : "Elegí primero el partido"}</option>
+                    {(form.localidad && !localidades.includes(form.localidad)) && <option value={form.localidad}>{form.localidad}</option>}
+                    {localidades.map((l) => <option key={l} value={l}>{l}</option>)}
+                  </select>
                 </div>
                 <div>
                   <label style={labelStyle}>Domicilio</label>
@@ -337,10 +404,6 @@ function PadronView({ perfil }) {
                 <div>
                   <label style={labelStyle}>Correo electrónico</label>
                   <input type="email" value={form.email} onChange={(e) => setCampo("email", e.target.value)} style={inputStyle} />
-                </div>
-                <div>
-                  <label style={labelStyle}>Plan contratado</label>
-                  <input value={form.plan_contratado} onChange={(e) => setCampo("plan_contratado", e.target.value)} style={inputStyle} />
                 </div>
                 <div>
                   <label style={labelStyle}>Estado</label>
@@ -406,6 +469,7 @@ function PadronView({ perfil }) {
                           <td style={tdStyle}>{a.fecha_nacimiento || "—"}</td>
                           <td style={{ ...tdStyle, fontFamily: "var(--font-mono)" }}>{a.numero_afiliado || "—"}</td>
                           <td style={tdStyle}>{a.provincia || "—"}</td>
+                          <td style={tdStyle}>{a.partido || "—"}</td>
                           <td style={tdStyle}>{a.localidad || "—"}</td>
                           <td style={tdStyle}>{a.domicilio || "—"}</td>
                           <td style={tdStyle}>{a.telefono_celular || "—"}</td>
