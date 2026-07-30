@@ -1033,7 +1033,7 @@ function ReglasView({ perfil }) {
   const [limite, setLimite] = useState(3);
   const [periodoMeses, setPeriodoMeses] = useState(12);
   const [limitePeriodo, setLimitePeriodo] = useState(1);
-  const [intervaloMeses, setIntervaloMeses] = useState(24);
+  const [intervaloMeses, setIntervaloMeses] = useState(12);
   const [margenGracia, setMargenGracia] = useState(1);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -1072,7 +1072,7 @@ function ReglasView({ perfil }) {
       cliente_id: clienteId, catalogo_item_id: catalogoItemId, activo: true, tipo_regla: dbTipoRegla,
       limite_anual: null, periodo_meses: null, limite_periodo: null, intervalo_meses: null, margen_gracia_meses: 0,
     };
-    if (dbTipoRegla === "anual") payload.limite_anual = limite;
+    if (dbTipoRegla === "anual") { payload.limite_anual = limite; payload.margen_gracia_meses = margenGracia; }
     else if (dbTipoRegla === "periodo") { payload.periodo_meses = periodoMeses; payload.limite_periodo = limitePeriodo; }
     else { payload.intervalo_meses = intervaloMeses; payload.margen_gracia_meses = margenGracia; }
 
@@ -1149,8 +1149,19 @@ function ReglasView({ perfil }) {
 
                 {anioCalendario ? (
                   <>
-                    <label style={{ ...labelStyle, marginTop: 10 }}>Cantidad de estudios por año</label>
-                    <input type="number" min={1} value={limite} onChange={(e) => setLimite(Number(e.target.value))} style={inputStyle} />
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginTop: 10 }}>
+                      <div>
+                        <label style={labelStyle}>Cantidad de estudios por año</label>
+                        <input type="number" min={1} value={limite} onChange={(e) => setLimite(Number(e.target.value))} style={inputStyle} />
+                      </div>
+                      <div>
+                        <label style={labelStyle}>Meses de tolerancia</label>
+                        <input type="number" min={0} value={margenGracia} onChange={(e) => setMargenGracia(Number(e.target.value))} style={inputStyle} />
+                      </div>
+                    </div>
+                    <div style={{ fontSize: 11.5, color: "var(--muted)", marginTop: 6 }}>
+                      Enero a diciembre exclusivamente. Si se supera el límite pero faltan pocos meses para que cierre el año (según la tolerancia), se deja cargar igual, marcado para revisión especial.
+                    </div>
                   </>
                 ) : (
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginTop: 10 }}>
@@ -1173,13 +1184,14 @@ function ReglasView({ perfil }) {
                     <input type="number" min={1} value={intervaloMeses} onChange={(e) => setIntervaloMeses(Number(e.target.value))} style={inputStyle} />
                   </div>
                   <div>
-                    <label style={labelStyle}>Margen de gracia (meses)</label>
+                    <label style={labelStyle}>Meses de tolerancia</label>
                     <input type="number" min={0} value={margenGracia} onChange={(e) => setMargenGracia(Number(e.target.value))} style={inputStyle} />
                   </div>
                 </div>
                 <div style={{ fontSize: 11.5, color: "var(--muted)", marginTop: 6 }}>
-                  Ej: cada 24 meses con margen 1 → se bloquea antes de los 23 meses; entre 23 y 24 se deja cargar pero queda marcado para revisión especial.
+                  Ej: cada 12 meses con 1 de tolerancia → se bloquea antes de los 11 meses; entre 11 y 12 se deja cargar pero queda marcado para revisión especial.
                 </div>
+
               </>
             )}
 
@@ -1205,9 +1217,9 @@ function ReglasView({ perfil }) {
                   <div>
                     <div style={{ fontSize: 14, fontWeight: 500, color: "var(--ink)" }}>{r.catalogo_items?.nombre}</div>
                     <div style={{ fontSize: 12, color: "var(--muted)" }}>
-                      {r.tipo_regla === "anual" && `Límite: ${r.limite_anual} por año`}
+                      {r.tipo_regla === "anual" && `Límite: ${r.limite_anual} por año (tolerancia ${r.margen_gracia_meses} meses)`}
                       {r.tipo_regla === "periodo" && `Límite: ${r.limite_periodo} cada ${r.periodo_meses} meses`}
-                      {r.tipo_regla === "intervalo" && `Mínimo cada ${r.intervalo_meses} meses (margen de ${r.margen_gracia_meses})`}
+                      {r.tipo_regla === "intervalo" && `Mínimo cada ${r.intervalo_meses} meses (tolerancia ${r.margen_gracia_meses})`}
                     </div>
                   </div>
                   <button onClick={() => toggleActivo(r.id, r.activo)} style={{
