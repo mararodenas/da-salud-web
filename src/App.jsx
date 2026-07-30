@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import {
   ClipboardList, Plus, LogOut, Users, AlertTriangle,
   Clock, Search, Inbox, Paperclip, FileText, Building2, ShieldCheck,
-  ChevronDown, ChevronRight, BedDouble, Receipt, Ambulance, BarChart3,
+  ChevronDown, ChevronRight, BedDouble, Receipt, Ambulance, BarChart3, Upload, X,
 } from "lucide-react";
 import { supabase } from "./supabaseClient";
 import {
@@ -83,45 +83,332 @@ function LoginScreen() {
 
 /* ---------- padrón ---------- */
 
-function PadronView() {
+function calcularEdad(fechaNacimiento) {
+  if (!fechaNacimiento) return null;
+  const hoy = new Date();
+  const nacimiento = new Date(fechaNacimiento);
+  if (Number.isNaN(nacimiento.getTime())) return null;
+  let edad = hoy.getFullYear() - nacimiento.getFullYear();
+  const m = hoy.getMonth() - nacimiento.getMonth();
+  if (m < 0 || (m === 0 && hoy.getDate() < nacimiento.getDate())) edad--;
+  return edad;
+}
+
+function splitCsvLine(line) {
+  const result = [];
+  let cur = "";
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (c === '"') { inQuotes = !inQuotes; continue; }
+    if (c === "," && !inQuotes) { result.push(cur.trim()); cur = ""; continue; }
+    cur += c;
+  }
+  result.push(cur.trim());
+  return result;
+}
+
+function parseAfiliadosCsv(text) {
+  const lines = text.split(/\r?\n/).filter((l) => l.trim().length > 0);
+  if (lines.length < 2) return [];
+  const headers = splitCsvLine(lines[0]).map((h) => h.toLowerCase().trim());
+  return lines.slice(1).map((line) => {
+    const values = splitCsvLine(line);
+    const obj = {};
+    headers.forEach((h, i) => { obj[h] = values[i] || ""; });
+    return obj;
+  });
+}
+
+const AFILIADO_CAMPOS = [
+  ["nombre", "Nombre y apellido"], ["dni", "DNI"], ["fecha_nacimiento", "Fecha de nacimiento"],
+  ["numero_afiliado", "N° Afiliado"], ["provincia", "Provincia"], ["localidad", "Localidad"],
+  ["domicilio", "Domicilio"], ["telefono_celular", "Teléfono celular"], ["email", "Correo electrónico"],
+  ["plan_contratado", "Plan contratado"],
+];
+
+function emptyAfiliadoForm() {
+  return { nombre: "", dni: "", fecha_nacimiento: "", numero_afiliado: "", provincia: "", localidad: "", domicilio: "", telefono_celular: "", email: "", plan_contratado: "", estado: "Activo" };
+}
+
+function PadronView({ perfil }) {
+  const isDaSalud = ["Administrador", "Coordinador", "Auditor"].includes(perfil.rol);
+  const canManage = isDaSalud || perfil.rol === "Administrador Cliente";
+
+  const [clientes, setClientes] = useState([]);
+  const [clienteId, setClienteId] = useState(isDaSalud ? "" : perfil.cliente_id);
+
   const [afiliados, setAfiliados] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [search, setSearch] = useState("");
+
+  const [showForm, setShowForm] = useState(false);
+  const [editingId, setEditingId] = useState(null);
+  const [form, setForm] = useState(emptyAfiliadoForm());
+  const [saving, setSaving] = useState(false);
+  const [formError, setFormError] = useState("");
+
+  const [showBulk, setShowBulk] = useState(false);
+  const [bulkFile, setBulkFile] = useState(null);
+  const [bulkStatus, setBulkStatus] = useState("");
+  const [bulkLoading, setBulkLoading] = useState(false);
 
   useEffect(() => {
-    let active = true;
-    supabase.from("afiliados").select("nombre, numero_afiliado, estado").order("nombre").then(({ data, error }) => {
-      if (!active) return;
-      if (error) setError(error.message); else setAfiliados(data || []);
-      setLoading(false);
+    if (!isDaSalud) return;
+    supabase.from("clientes").select("id, nombre").order("nombre").then(({ data }) => setClientes(data || []));
+  }, [isDaSalud]);
+
+  const loadAfiliados = () => {
+    setShowForm(false); setShowBulk(false); setBulkStatus("");
+    if (!clienteId) { setAfiliados([]); return; }
+    setLoading(true); setError("");
+    supabase.from("afiliados")
+      .select("id, nombre, dni, fecha_nacimiento, numero_afiliado, provincia, localidad, domicilio, telefono_celular, email, plan_contratado, estado")
+      .eq("cliente_id", clienteId).order("nombre")
+      .then(({ data, error }) => {
+        if (error) setError(error.message); else setAfiliados(data || []);
+        setLoading(false);
+      });
+  };
+  useEffect(loadAfiliados, [clienteId]);
+
+  const q = search.trim().toLowerCase();
+  const filtrados = !q ? afiliados : afiliados.filter((a) =>
+    (a.nombre || "").toLowerCase().includes(q) ||
+    (a.dni || "").toLowerCase().includes(q) ||
+    (a.numero_afiliado || "").toLowerCase().includes(q)
+  );
+
+  const openNew = () => { setEditingId(null); setForm(emptyAfiliadoForm()); setFormError(""); setShowBulk(false); setShowForm(true); };
+  const openEdit = (a) => {
+    if (!canManage) return;
+    setEditingId(a.id);
+    setForm({
+      nombre: a.nombre || "", dni: a.dni || "", fecha_nacimiento: a.fecha_nacimiento || "",
+      numero_afiliado: a.numero_afiliado || "", provincia: a.provincia || "", localidad: a.localidad || "",
+      domicilio: a.domicilio || "", telefono_celular: a.telefono_celular || "", email: a.email || "",
+      plan_contratado: a.plan_contratado || "", estado: a.estado || "Activo",
     });
-    return () => { active = false; };
-  }, []);
+    setFormError(""); setShowBulk(false); setShowForm(true);
+  };
+  const setCampo = (campo, valor) => setForm((f) => ({ ...f, [campo]: valor }));
+
+  const guardarAfiliado = async () => {
+    if (!form.nombre.trim() || !clienteId) return;
+    setSaving(true); setFormError("");
+    const payload = { ...form, cliente_id: clienteId, fecha_nacimiento: form.fecha_nacimiento || null };
+    const { error } = editingId
+      ? await supabase.from("afiliados").update(payload).eq("id", editingId)
+      : await supabase.from("afiliados").insert(payload);
+    setSaving(false);
+    if (error) { setFormError(error.message); return; }
+    loadAfiliados();
+  };
+
+  const subirMasivo = async () => {
+    if (!bulkFile || !clienteId) return;
+    setBulkLoading(true); setBulkStatus("");
+    try {
+      const text = await bulkFile.text();
+      const filas = parseAfiliadosCsv(text);
+      if (filas.length === 0) { setBulkStatus("El archivo no tiene filas para cargar."); setBulkLoading(false); return; }
+      const payload = filas.map((f) => ({
+        cliente_id: clienteId,
+        nombre: f.nombre || "", dni: f.dni || "", fecha_nacimiento: f.fecha_nacimiento || null,
+        numero_afiliado: f.numero_afiliado || "", provincia: f.provincia || "", localidad: f.localidad || "",
+        domicilio: f.domicilio || "", telefono_celular: f.telefono_celular || "", email: f.email || "",
+        plan_contratado: f.plan_contratado || "", estado: f.estado || "Activo",
+      }));
+      const { error } = await supabase.from("afiliados").insert(payload);
+      setBulkLoading(false);
+      if (error) { setBulkStatus("Error: " + error.message); return; }
+      setBulkStatus(`✓ ${payload.length} afiliados cargados.`);
+      setBulkFile(null);
+      loadAfiliados();
+    } catch (e) {
+      setBulkLoading(false);
+      setBulkStatus("No se pudo leer el archivo.");
+    }
+  };
+
+  const thStyle = { textAlign: "left", padding: "9px 10px", fontSize: 11, fontWeight: 600, letterSpacing: "0.03em", textTransform: "uppercase", color: "var(--muted)", borderBottom: "1px solid var(--border)", whiteSpace: "nowrap" };
+  const tdStyle = { padding: "9px 10px", fontSize: 13, color: "var(--ink)", borderBottom: "1px solid var(--border)", whiteSpace: "nowrap" };
 
   return (
-    <div style={{ maxWidth: 720, margin: "0 auto", padding: "28px 24px" }}>
+    <div style={{ maxWidth: 1100, margin: "0 auto", padding: "28px 24px" }}>
       <h2 style={{ fontFamily: "var(--font-display)", fontWeight: 600, fontSize: 19, color: "var(--ink)", marginBottom: 4 }}>Padrón</h2>
       <p style={{ fontSize: 13, color: "var(--muted)", marginBottom: 20 }}>Afiliados visibles para tu usuario, según las reglas de acceso reales.</p>
 
-      {loading && <div style={{ fontSize: 13, color: "var(--muted)" }}>Cargando...</div>}
-      {error && <div style={{ fontSize: 13, color: "#791F1F", background: "#FCEBEB", padding: "10px 12px", borderRadius: 8 }}>{error}</div>}
+      {isDaSalud && (
+        <div style={{ marginBottom: 18 }}>
+          <label style={labelStyle}>Cliente</label>
+          <select value={clienteId} onChange={(e) => setClienteId(e.target.value)} style={{ ...inputStyle, maxWidth: 360 }}>
+            <option value="">Seleccionar cliente...</option>
+            {clientes.map((c) => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+          </select>
+        </div>
+      )}
 
-      {!loading && !error && (
-        afiliados.length === 0 ? (
-          <EmptyState icon={Users} text="No hay afiliados visibles para tu usuario." />
-        ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {afiliados.map((a, i) => (
-              <div key={i} style={{ ...cardStyle, display: "flex", flexDirection: "column", gap: 4, padding: "12px 14px" }}>
-                <div style={{ fontSize: 14, fontWeight: 500, color: "var(--ink)" }}>{a.nombre}</div>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
-                  <span style={{ fontSize: 12, color: "var(--muted)", fontFamily: "var(--font-mono)" }}>N° {a.numero_afiliado || "—"}</span>
-                  <Pill bg={a.estado === "Activo" ? "#EAF3DE" : "#FCEBEB"} fg={a.estado === "Activo" ? "#27500A" : "#791F1F"}>{a.estado}</Pill>
+      {clienteId && (
+        <>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap", marginBottom: 16 }}>
+            <div style={{ position: "relative", flex: "1 1 260px", maxWidth: 360 }}>
+              <Search size={15} color="var(--muted)" style={{ position: "absolute", left: 11, top: "50%", transform: "translateY(-50%)" }} />
+              <input
+                value={search} onChange={(e) => setSearch(e.target.value)}
+                placeholder="Buscar por apellido y nombre, DNI o N° afiliado..."
+                style={{ ...inputStyle, paddingLeft: 34 }}
+              />
+            </div>
+            {canManage && (
+              <div style={{ display: "flex", gap: 8 }}>
+                <button onClick={() => { setShowBulk((v) => !v); setShowForm(false); }} style={{ ...btnPrimary(true), background: "var(--surface)", color: "var(--primary-dark)", border: "1px solid var(--primary)" }}>
+                  <Upload size={15} /> Carga masiva
+                </button>
+                <button onClick={openNew} style={btnPrimary(true)}>
+                  <Plus size={15} /> Agregar afiliado
+                </button>
+              </div>
+            )}
+          </div>
+
+          {showBulk && (
+            <div style={{ ...cardStyle, padding: 18, marginBottom: 20 }}>
+              <div style={{ fontSize: 13.5, fontWeight: 600, color: "var(--ink)", marginBottom: 6 }}>Carga masiva de afiliados</div>
+              <p style={{ fontSize: 12.5, color: "var(--muted)", marginBottom: 10, lineHeight: 1.5 }}>
+                Subí un archivo CSV con la primera fila como encabezado, con estas columnas en cualquier orden:{" "}
+                <span style={{ fontFamily: "var(--font-mono)", fontSize: 11.5 }}>
+                  nombre, dni, fecha_nacimiento, numero_afiliado, provincia, localidad, domicilio, telefono_celular, email, plan_contratado, estado
+                </span>. La fecha de nacimiento en formato AAAA-MM-DD.
+              </p>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                <input type="file" accept=".csv,text/csv" onChange={(e) => setBulkFile(e.target.files?.[0] || null)} style={{ fontSize: 12.5, fontFamily: "var(--font-body)" }} />
+                <button onClick={subirMasivo} disabled={!bulkFile || bulkLoading} style={btnPrimary(!!bulkFile && !bulkLoading)}>
+                  {bulkLoading ? "Subiendo..." : "Subir archivo"}
+                </button>
+              </div>
+              {bulkStatus && <div style={{ marginTop: 10, fontSize: 12.5, color: bulkStatus.startsWith("Error") || bulkStatus.startsWith("No se") ? "#A13333" : "#27500A" }}>{bulkStatus}</div>}
+            </div>
+          )}
+
+          {showForm && (
+            <div style={{ ...cardStyle, padding: 20, marginBottom: 20 }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
+                <div style={{ fontSize: 14, fontWeight: 600, color: "var(--ink)" }}>{editingId ? "Editar afiliado" : "Nuevo afiliado"}</div>
+                <button onClick={() => setShowForm(false)} style={{ border: "none", background: "transparent", cursor: "pointer", color: "var(--muted)" }}>
+                  <X size={16} />
+                </button>
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+                <div>
+                  <label style={labelStyle}>Nombre y apellido</label>
+                  <input value={form.nombre} onChange={(e) => setCampo("nombre", e.target.value)} style={inputStyle} />
+                </div>
+                <div>
+                  <label style={labelStyle}>DNI</label>
+                  <input value={form.dni} onChange={(e) => setCampo("dni", e.target.value)} style={inputStyle} />
+                </div>
+                <div>
+                  <label style={labelStyle}>Fecha de nacimiento</label>
+                  <input type="date" value={form.fecha_nacimiento} onChange={(e) => setCampo("fecha_nacimiento", e.target.value)} style={inputStyle} />
+                </div>
+                <div>
+                  <label style={labelStyle}>N° Afiliado</label>
+                  <input value={form.numero_afiliado} onChange={(e) => setCampo("numero_afiliado", e.target.value)} style={inputStyle} />
+                </div>
+                <div>
+                  <label style={labelStyle}>Provincia</label>
+                  <input value={form.provincia} onChange={(e) => setCampo("provincia", e.target.value)} style={inputStyle} />
+                </div>
+                <div>
+                  <label style={labelStyle}>Localidad</label>
+                  <input value={form.localidad} onChange={(e) => setCampo("localidad", e.target.value)} style={inputStyle} />
+                </div>
+                <div>
+                  <label style={labelStyle}>Domicilio</label>
+                  <input value={form.domicilio} onChange={(e) => setCampo("domicilio", e.target.value)} style={inputStyle} />
+                </div>
+                <div>
+                  <label style={labelStyle}>Teléfono celular</label>
+                  <input value={form.telefono_celular} onChange={(e) => setCampo("telefono_celular", e.target.value)} style={inputStyle} />
+                </div>
+                <div>
+                  <label style={labelStyle}>Correo electrónico</label>
+                  <input type="email" value={form.email} onChange={(e) => setCampo("email", e.target.value)} style={inputStyle} />
+                </div>
+                <div>
+                  <label style={labelStyle}>Plan contratado</label>
+                  <input value={form.plan_contratado} onChange={(e) => setCampo("plan_contratado", e.target.value)} style={inputStyle} />
+                </div>
+                <div>
+                  <label style={labelStyle}>Estado</label>
+                  <select value={form.estado} onChange={(e) => setCampo("estado", e.target.value)} style={inputStyle}>
+                    <option value="Activo">Activo</option>
+                    <option value="Baja">Baja</option>
+                  </select>
                 </div>
               </div>
-            ))}
-          </div>
-        )
+
+              {formError && <div style={{ marginTop: 12, fontSize: 12.5, color: "#A13333", background: "#FBE7E7", padding: "8px 10px", borderRadius: 8 }}>{formError}</div>}
+
+              <button onClick={guardarAfiliado} disabled={!form.nombre.trim() || saving} style={{ ...btnPrimary(!!form.nombre.trim()), marginTop: 16 }}>
+                {saving ? "Guardando..." : editingId ? "Guardar cambios" : "Agregar afiliado"}
+              </button>
+            </div>
+          )}
+
+          {loading && <div style={{ fontSize: 13, color: "var(--muted)" }}>Cargando...</div>}
+          {error && <div style={{ fontSize: 13, color: "#791F1F", background: "#FCEBEB", padding: "10px 12px", borderRadius: 8 }}>{error}</div>}
+
+          {!loading && !error && (
+            filtrados.length === 0 ? (
+              <EmptyState icon={Users} text={afiliados.length === 0 ? "No hay afiliados cargados para este cliente." : "Ningún afiliado coincide con la búsqueda."} />
+            ) : (
+              <div style={{ ...cardStyle, overflowX: "auto" }}>
+                <table style={{ borderCollapse: "collapse", width: "100%" }}>
+                  <thead>
+                    <tr>
+                      {AFILIADO_CAMPOS.map(([campo, label]) => <th key={campo} style={thStyle}>{label}</th>)}
+                      <th style={thStyle}>Edad</th>
+                      <th style={thStyle}>Estado</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filtrados.map((a) => {
+                      const edad = calcularEdad(a.fecha_nacimiento);
+                      return (
+                        <tr
+                          key={a.id}
+                          onClick={() => openEdit(a)}
+                          style={{ cursor: canManage ? "pointer" : "default" }}
+                          onMouseEnter={(e) => { if (canManage) e.currentTarget.style.background = "var(--bg)"; }}
+                          onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
+                        >
+                          <td style={{ ...tdStyle, fontWeight: 500 }}>{a.nombre || "—"}</td>
+                          <td style={tdStyle}>{a.dni || "—"}</td>
+                          <td style={tdStyle}>{a.fecha_nacimiento || "—"}</td>
+                          <td style={{ ...tdStyle, fontFamily: "var(--font-mono)" }}>{a.numero_afiliado || "—"}</td>
+                          <td style={tdStyle}>{a.provincia || "—"}</td>
+                          <td style={tdStyle}>{a.localidad || "—"}</td>
+                          <td style={tdStyle}>{a.domicilio || "—"}</td>
+                          <td style={tdStyle}>{a.telefono_celular || "—"}</td>
+                          <td style={tdStyle}>{a.email || "—"}</td>
+                          <td style={tdStyle}>{a.plan_contratado || "—"}</td>
+                          <td style={tdStyle}>{edad === null ? "—" : edad}</td>
+                          <td style={tdStyle}>
+                            <Pill bg={a.estado === "Activo" ? "#EAF3DE" : "#FCEBEB"} fg={a.estado === "Activo" ? "#27500A" : "#791F1F"}>{a.estado}</Pill>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )
+          )}
+        </>
       )}
     </div>
   );
@@ -1048,6 +1335,7 @@ function ReglasView({ perfil }) {
 
   const [reglas, setReglas] = useState([]);
   const [loadingReglas, setLoadingReglas] = useState(false);
+  const [showForm, setShowForm] = useState(false);
 
   useEffect(() => {
     if (!isAdminGeneral) return;
@@ -1059,6 +1347,7 @@ function ReglasView({ perfil }) {
   }, [tipo]);
 
   const loadReglas = () => {
+    setShowForm(false);
     if (!clienteId) { setReglas([]); return; }
     setLoadingReglas(true);
     supabase.from("reglas_autorizacion")
@@ -1117,8 +1406,26 @@ function ReglasView({ perfil }) {
 
       {clienteId && (
         <>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
+            <div style={{ fontSize: 13, color: "var(--muted)" }}>
+              {loadingReglas ? "Cargando..." : `${reglas.length} regla${reglas.length === 1 ? "" : "s"} cargada${reglas.length === 1 ? "" : "s"}`}
+            </div>
+            {!showForm && (
+              <button onClick={() => setShowForm(true)} style={btnPrimary(true)}>
+                <Plus size={16} /> Nueva regla
+              </button>
+            )}
+          </div>
+
+          {showForm && (
           <div style={{ ...cardStyle, padding: 20, marginBottom: 24 }}>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+              <div style={{ fontSize: 14, fontWeight: 600, color: "var(--ink)" }}>Nueva regla</div>
+              <button onClick={() => setShowForm(false)} style={{ border: "none", background: "transparent", cursor: "pointer", fontSize: 12.5, color: "var(--muted)", fontFamily: "var(--font-body)" }}>
+                Cancelar
+              </button>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginTop: 14 }}>
               <div>
                 <label style={labelStyle}>Tipo de auditoría</label>
                 <select value={tipo} onChange={(e) => setTipo(e.target.value)} style={inputStyle}>
@@ -1213,6 +1520,7 @@ function ReglasView({ perfil }) {
               {saving ? "Guardando..." : "Guardar regla"}
             </button>
           </div>
+          )}
 
           {loadingReglas ? (
             <div style={{ fontSize: 13, color: "var(--muted)" }}>Cargando...</div>
@@ -1477,7 +1785,7 @@ function AppShell({ session }) {
         </header>
 
         <div style={{ flex: 1, minWidth: 0 }}>
-          {view === "padron" && <PadronView />}
+          {view === "padron" && <PadronView perfil={perfil} />}
           {view === "nuevo" && <NewCaseView perfil={perfil} goTo={setView} onCreated={() => setRefreshKey((k) => k + 1)} />}
           {view === "casos" && <CasesView refreshKey={refreshKey} perfil={perfil} />}
           {view === "clientes" && <ClientesView />}
