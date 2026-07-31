@@ -2149,11 +2149,11 @@ function buildNavGroups(perfil) {
         key: "clientes", label: "Clientes", icon: Building2, view: "clientes",
         children: [
           { key: "padron", label: "Padrón", icon: Users, view: "padron" },
-          { key: "reglas", label: "Reglas del cliente", icon: ShieldCheck, view: "reglas" },
+          { key: "reglas", label: "Reglas de negocio", icon: ShieldCheck, view: "reglas" },
         ],
       });
     } else {
-      adminItems.push({ key: "reglas", label: "Reglas del cliente", icon: ShieldCheck, view: "reglas" });
+      adminItems.push({ key: "reglas", label: "Reglas de negocio", icon: ShieldCheck, view: "reglas" });
     }
     adminItems.push({ key: "prestadores", label: "Prestadores", icon: Stethoscope, view: "prestadores" });
     groups.push({ key: "admin", label: "Administración", items: adminItems });
@@ -2343,7 +2343,7 @@ function AppShell({ session }) {
   if (!perfil || !view) return <div style={{ minHeight: "100vh", background: "var(--bg)" }} />;
 
   const VIEW_TITLES = {
-    padron: "Padrón", nuevo: "Nuevo caso", casos: "Casos", clientes: "Clientes", prestadores: "Prestadores", reglas: "Reglas del cliente",
+    padron: "Padrón", nuevo: "Nuevo caso", casos: "Casos", clientes: "Clientes", prestadores: "Prestadores", reglas: "Reglas de negocio",
     "censo-camas": "Censo de camas", facturacion: "Facturación y recuperos", traslados: "Traslados", bi: "Business Intelligence",
   };
 
