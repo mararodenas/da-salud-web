@@ -128,7 +128,7 @@ const AFILIADO_CAMPOS = [
 ];
 
 function emptyAfiliadoForm() {
-  return { nombre: "", dni: "", fecha_nacimiento: "", numero_afiliado: "", provincia: "", partido: "", localidad: "", domicilio: "", telefono_celular: "", email: "", plan_contratado: "", estado: "Activo", titular_id: "" };
+  return { nombre: "", dni: "", fecha_nacimiento: "", numero_afiliado: "", provincia: "", partido: "", localidad: "", domicilio: "", telefono_celular: "", email: "", plan_id: "", estado: "Activo", titular_id: "" };
 }
 
 const GEOREF_BASE = "https://apis.datos.gob.ar/georef/api";
@@ -190,12 +190,19 @@ function PadronView({ perfil }) {
     supabase.from("clientes").select("id, nombre").order("nombre").then(({ data }) => setClientes(data || []));
   }, [isDaSalud]);
 
+  const [planes, setPlanes] = useState([]);
+  useEffect(() => {
+    if (!clienteId) { setPlanes([]); return; }
+    supabase.from("planes").select("id, nombre, contrato_ruta").eq("cliente_id", clienteId).eq("activo", true).order("nombre")
+      .then(({ data }) => setPlanes(data || []));
+  }, [clienteId]);
+
   const loadAfiliados = () => {
     setShowForm(false); setShowBulk(false); setBulkStatus("");
     if (!clienteId) { setAfiliados([]); return; }
     setLoading(true); setError("");
     supabase.from("afiliados")
-      .select("id, nombre, dni, fecha_nacimiento, numero_afiliado, provincia, partido, localidad, domicilio, telefono_celular, email, plan_contratado, estado, titular_id")
+      .select("id, nombre, dni, fecha_nacimiento, numero_afiliado, provincia, partido, localidad, domicilio, telefono_celular, email, plan_id, plan_contratado, estado, titular_id")
       .eq("cliente_id", clienteId).order("nombre")
       .then(({ data, error }) => {
         if (error) setError(error.message); else setAfiliados(data || []);
@@ -219,7 +226,7 @@ function PadronView({ perfil }) {
       nombre: a.nombre || "", dni: a.dni || "", fecha_nacimiento: a.fecha_nacimiento || "",
       numero_afiliado: a.numero_afiliado || "", provincia: a.provincia || "", partido: a.partido || "", localidad: a.localidad || "",
       domicilio: a.domicilio || "", telefono_celular: a.telefono_celular || "", email: a.email || "",
-      plan_contratado: a.plan_contratado || "", estado: a.estado || "Activo", titular_id: a.titular_id || "",
+      plan_id: a.plan_id || "", estado: a.estado || "Activo", titular_id: a.titular_id || "",
     });
     setFormError(""); setShowBulk(false); setShowForm(true);
   };
@@ -228,7 +235,7 @@ function PadronView({ perfil }) {
   const guardarAfiliado = async () => {
     if (!form.nombre.trim() || !clienteId) return;
     setSaving(true); setFormError("");
-    const payload = { ...form, cliente_id: clienteId, fecha_nacimiento: form.fecha_nacimiento || null, titular_id: form.titular_id || null };
+    const payload = { ...form, cliente_id: clienteId, fecha_nacimiento: form.fecha_nacimiento || null, titular_id: form.titular_id || null, plan_id: form.plan_id || null };
     const { error } = editingId
       ? await supabase.from("afiliados").update(payload).eq("id", editingId)
       : await supabase.from("afiliados").insert(payload);
@@ -336,9 +343,17 @@ function PadronView({ perfil }) {
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 14, marginBottom: 14, flexWrap: "wrap" }}>
                 <div style={{ fontSize: 14, fontWeight: 600, color: "var(--ink)" }}>{editingId ? "Editar afiliado" : "Nuevo afiliado"}</div>
                 <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                  <div style={{ width: 170 }}>
+                  <div style={{ width: 210 }}>
                     <label style={labelStyle}>Plan contratado</label>
-                    <input value={form.plan_contratado} onChange={(e) => setCampo("plan_contratado", e.target.value)} style={inputStyle} />
+                    <select value={form.plan_id} onChange={(e) => setCampo("plan_id", e.target.value)} style={inputStyle}>
+                      <option value="">Sin plan asignado</option>
+                      {planes.map((p) => <option key={p.id} value={p.id}>{p.nombre}</option>)}
+                    </select>
+                    {form.plan_id && planes.find((p) => p.id === form.plan_id)?.contrato_ruta && (
+                      <button onClick={() => verContratoDePlan(form.plan_id)} style={{ display: "flex", alignItems: "center", gap: 5, border: "none", background: "transparent", cursor: "pointer", fontSize: 11.5, color: "var(--primary-dark)", fontFamily: "var(--font-body)", marginTop: 4, padding: 0 }}>
+                        <FileText size={12} /> Ver contrato del plan
+                      </button>
+                    )}
                   </div>
                   <button onClick={() => setShowForm(false)} style={{ border: "none", background: "transparent", cursor: "pointer", color: "var(--muted)", marginTop: 18 }}>
                     <X size={16} />
@@ -465,6 +480,7 @@ function PadronView({ perfil }) {
                       const edad = calcularEdad(a.fecha_nacimiento);
                       const esMenor = edad !== null && edad < 18;
                       const titular = a.titular_id ? afiliados.find((x) => x.id === a.titular_id) : null;
+                      const plan = a.plan_id ? planes.find((p) => p.id === a.plan_id) : null;
                       return (
                         <tr
                           key={a.id}
@@ -483,7 +499,15 @@ function PadronView({ perfil }) {
                           <td style={tdStyle}>{a.domicilio || "—"}</td>
                           <td style={tdStyle}>{a.telefono_celular || "—"}</td>
                           <td style={tdStyle}>{a.email || "—"}</td>
-                          <td style={tdStyle}>{a.plan_contratado || "—"}</td>
+                          <td style={tdStyle}>
+                            {plan ? (
+                              plan.contrato_ruta ? (
+                                <button onClick={(e) => { e.stopPropagation(); verContratoStorage(plan.contrato_ruta); }} style={{ display: "flex", alignItems: "center", gap: 5, border: "none", background: "transparent", cursor: "pointer", fontSize: 12.5, color: "var(--primary-dark)", fontFamily: "var(--font-body)", padding: 0 }}>
+                                  <FileText size={12} /> {plan.nombre}
+                                </button>
+                              ) : plan.nombre
+                            ) : (a.plan_contratado || "—")}
+                          </td>
                           <td style={tdStyle}>
                             {edad === null ? "—" : edad}
                             {esMenor && <span style={{ marginLeft: 6 }}><Pill bg="#FAEEDA" fg="#633806">Menor</Pill></span>}
@@ -644,7 +668,7 @@ function NewCaseView({ perfil, onCreated, goTo }) {
     if (!wasFirst) setAfiliadoId("");
     setShowNewAffiliate(false); setLastCreated(null);
     if (!clienteId) { setAfiliados([]); return; }
-    supabase.from("afiliados").select("id, nombre, numero_afiliado, estado").eq("cliente_id", clienteId).order("nombre")
+    supabase.from("afiliados").select("id, nombre, numero_afiliado, estado, plan_id").eq("cliente_id", clienteId).order("nombre")
       .then(({ data }) => setAfiliados(data || []));
   }, [clienteId]);
 
@@ -729,6 +753,11 @@ function NewCaseView({ perfil, onCreated, goTo }) {
               {afiliados.map((a) => <option key={a.id} value={a.id}>{a.nombre}{a.numero_afiliado ? " · N° " + a.numero_afiliado : ""}{a.estado === "Baja" ? " (Baja)" : ""}</option>)}
               {canManagePadron && <option value="__new__">+ Agregar afiliado al padrón</option>}
             </select>
+            {afiliado?.plan_id && (
+              <button onClick={() => verContratoDePlan(afiliado.plan_id)} style={{ display: "flex", alignItems: "center", gap: 5, border: "none", background: "transparent", cursor: "pointer", fontSize: 11.5, color: "var(--primary-dark)", fontFamily: "var(--font-body)", marginTop: 6, padding: 0 }}>
+                <FileText size={12} /> Ver contrato del plan
+              </button>
+            )}
             {afiliado?.estado === "Baja" && (
               <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8, padding: "8px 12px", background: "#FAEEDA", color: "#633806", borderRadius: 8, fontSize: 12.5 }}>
                 <AlertTriangle size={15} /> Este afiliado figura de baja en el padrón.
@@ -807,7 +836,7 @@ function CasesView({ refreshKey, perfil }) {
     let active = true;
     setLoading(true);
     supabase.from("casos")
-      .select("id, titulo, descripcion, tipo, estado, prioridad, vence_en, creado_en, clientes(nombre), afiliados(nombre, numero_afiliado), asignado:perfiles!casos_asignado_a_fkey(nombre)")
+      .select("id, titulo, descripcion, tipo, estado, prioridad, vence_en, creado_en, clientes(nombre), afiliados(nombre, numero_afiliado, plan_id), asignado:perfiles!casos_asignado_a_fkey(nombre)")
       .order("creado_en", { ascending: false })
       .then(({ data, error }) => {
         if (!active) return;
@@ -967,6 +996,11 @@ function CaseCard({ c, now, canDecide, perfil, expanded, onToggle, onChanged }) 
             <div>
               <div style={{ fontSize: 11, color: "var(--muted)" }}>Afiliado</div>
               <div style={{ fontWeight: 500, color: "var(--ink)" }}>{c.afiliados?.nombre || "—"}{c.afiliados?.numero_afiliado ? " · N° " + c.afiliados.numero_afiliado : ""}</div>
+              {c.afiliados?.plan_id && (
+                <button onClick={() => verContratoDePlan(c.afiliados.plan_id)} style={{ display: "flex", alignItems: "center", gap: 4, border: "none", background: "transparent", cursor: "pointer", fontSize: 11.5, color: "var(--primary-dark)", fontFamily: "var(--font-body)", padding: 0, marginTop: 3 }}>
+                  <FileText size={11} /> Ver contrato del plan
+                </button>
+              )}
             </div>
             <div>
               <div style={{ fontSize: 11, color: "var(--muted)" }}>Asignado a</div>
@@ -1075,185 +1109,289 @@ const MESES = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "
 
 const TIPOS_CONTRATO = ["Fee mensual", "Paquete por volumen", "Valor por caso", "Proyecto cerrado", "Bolsa de horas", "Servicio tecnológico", "Modelo mixto"];
 
+function emptyClienteForm() {
+  return {
+    nombre: "", sigla: "", tipo: CLIENT_TYPES[0], mes_inicio_ejercicio: 1,
+    nombre_contacto: "", telefono_contacto: "", email_contacto: "", cuit: "",
+    domicilio_fiscal: "", localidad: "", provincia: "", tipo_contrato: TIPOS_CONTRATO[0],
+  };
+}
+
+async function verContratoStorage(ruta) {
+  if (!ruta) return;
+  const { data, error } = await supabase.storage.from("contratos").createSignedUrl(ruta, 60);
+  if (!error && data) window.open(data.signedUrl, "_blank");
+}
+
+async function verContratoDePlan(planId) {
+  if (!planId) return;
+  const { data: plan } = await supabase.from("planes").select("contrato_ruta").eq("id", planId).single();
+  if (plan?.contrato_ruta) verContratoStorage(plan.contrato_ruta);
+}
+
 function ClientesView() {
   const [clientes, setClientes] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [expandedId, setExpandedId] = useState(null);
+  const [search, setSearch] = useState("");
 
-  const [nombre, setNombre] = useState("");
-  const [tipo, setTipo] = useState(CLIENT_TYPES[0]);
-  const [mesInicio, setMesInicio] = useState(1);
-  const [nombreContacto, setNombreContacto] = useState("");
-  const [telefonoContacto, setTelefonoContacto] = useState("");
-  const [emailContacto, setEmailContacto] = useState("");
-  const [cuit, setCuit] = useState("");
-  const [domicilioFiscal, setDomicilioFiscal] = useState("");
-  const [localidad, setLocalidad] = useState("");
-  const [provincia, setProvincia] = useState("");
-  const [tipoContrato, setTipoContrato] = useState(TIPOS_CONTRATO[0]);
+  const [showForm, setShowForm] = useState(false);
+  const [editingId, setEditingId] = useState(null);
+  const [form, setForm] = useState(emptyClienteForm());
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
+  const [formError, setFormError] = useState("");
+
+  const [planes, setPlanes] = useState([]);
+  const [planNombre, setPlanNombre] = useState("");
+  const [planSaving, setPlanSaving] = useState(false);
+  const [planError, setPlanError] = useState("");
 
   const load = () => {
     setLoading(true);
     supabase.from("clientes").select("*").order("nombre")
-      .then(({ data, error }) => { if (error) setError(error.message); else setClientes(data || []); setLoading(false); });
+      .then(({ data, error }) => { if (error) setFormError(error.message); else setClientes(data || []); setLoading(false); });
   };
   useEffect(load, []);
 
-  const resetForm = () => {
-    setNombre(""); setTipo(CLIENT_TYPES[0]); setMesInicio(1);
-    setNombreContacto(""); setTelefonoContacto(""); setEmailContacto("");
-    setCuit(""); setDomicilioFiscal(""); setLocalidad(""); setProvincia("");
-    setTipoContrato(TIPOS_CONTRATO[0]);
+  const loadPlanes = (clienteId) => {
+    if (!clienteId) { setPlanes([]); return; }
+    supabase.from("planes").select("id, nombre, contrato_ruta, activo").eq("cliente_id", clienteId).order("nombre")
+      .then(({ data }) => setPlanes(data || []));
   };
 
-  const addCliente = async () => {
-    if (!nombre.trim()) return;
-    setSaving(true); setError("");
-    const { error } = await supabase.from("clientes").insert({
-      nombre: nombre.trim(), tipo, mes_inicio_ejercicio: mesInicio,
-      nombre_contacto: nombreContacto.trim() || null,
-      telefono_contacto: telefonoContacto.trim() || null,
-      email_contacto: emailContacto.trim() || null,
-      cuit: cuit.trim() || null,
-      domicilio_fiscal: domicilioFiscal.trim() || null,
-      localidad: localidad.trim() || null,
-      provincia: provincia.trim() || null,
-      tipo_contrato: tipoContrato,
+  const q = search.trim().toLowerCase();
+  const filtrados = !q ? clientes : clientes.filter((c) =>
+    (c.nombre || "").toLowerCase().includes(q) ||
+    (c.sigla || "").toLowerCase().includes(q) ||
+    (c.cuit || "").toLowerCase().includes(q)
+  );
+
+  const openNew = () => { setEditingId(null); setForm(emptyClienteForm()); setFormError(""); setPlanes([]); setShowForm(true); };
+  const openEdit = (c) => {
+    setEditingId(c.id);
+    setForm({
+      nombre: c.nombre || "", sigla: c.sigla || "", tipo: c.tipo || CLIENT_TYPES[0],
+      mes_inicio_ejercicio: c.mes_inicio_ejercicio || 1,
+      nombre_contacto: c.nombre_contacto || "", telefono_contacto: c.telefono_contacto || "",
+      email_contacto: c.email_contacto || "", cuit: c.cuit || "",
+      domicilio_fiscal: c.domicilio_fiscal || "", localidad: c.localidad || "",
+      provincia: c.provincia || "", tipo_contrato: c.tipo_contrato || TIPOS_CONTRATO[0],
     });
-    setSaving(false);
-    if (error) { setError(error.message); return; }
-    resetForm();
-    load();
+    setFormError(""); setPlanNombre(""); setPlanError("");
+    loadPlanes(c.id);
+    setShowForm(true);
   };
+  const setCampo = (campo, valor) => setForm((f) => ({ ...f, [campo]: valor }));
+
+  const guardarCliente = async () => {
+    if (!form.nombre.trim()) return;
+    setSaving(true); setFormError("");
+    const payload = {
+      nombre: form.nombre.trim(), sigla: form.sigla.trim() || null, tipo: form.tipo,
+      mes_inicio_ejercicio: form.mes_inicio_ejercicio,
+      nombre_contacto: form.nombre_contacto.trim() || null, telefono_contacto: form.telefono_contacto.trim() || null,
+      email_contacto: form.email_contacto.trim() || null, cuit: form.cuit.trim() || null,
+      domicilio_fiscal: form.domicilio_fiscal.trim() || null, localidad: form.localidad.trim() || null,
+      provincia: form.provincia.trim() || null, tipo_contrato: form.tipo_contrato,
+    };
+    if (editingId) {
+      const { error } = await supabase.from("clientes").update(payload).eq("id", editingId);
+      setSaving(false);
+      if (error) { setFormError(error.message); return; }
+      load();
+    } else {
+      const { data, error } = await supabase.from("clientes").insert(payload).select().single();
+      setSaving(false);
+      if (error) { setFormError(error.message); return; }
+      load();
+      openEdit(data);
+    }
+  };
+
+  const agregarPlan = async () => {
+    if (!planNombre.trim() || !editingId) return;
+    setPlanSaving(true); setPlanError("");
+    const { error } = await supabase.from("planes").insert({ cliente_id: editingId, nombre: planNombre.trim() });
+    setPlanSaving(false);
+    if (error) { setPlanError(error.message); return; }
+    setPlanNombre("");
+    loadPlanes(editingId);
+  };
+
+  const thStyle = { textAlign: "left", padding: "9px 10px", fontSize: 11, fontWeight: 600, letterSpacing: "0.03em", textTransform: "uppercase", color: "var(--muted)", borderBottom: "1px solid var(--border)", whiteSpace: "nowrap" };
+  const tdStyle = { padding: "9px 10px", fontSize: 13, color: "var(--ink)", borderBottom: "1px solid var(--border)", whiteSpace: "nowrap" };
 
   return (
-    <div style={{ maxWidth: 640, margin: "0 auto", padding: "28px 24px" }}>
+    <div style={{ maxWidth: 1100, margin: "0 auto", padding: "28px 24px" }}>
       <h2 style={{ fontFamily: "var(--font-display)", fontWeight: 600, fontSize: 19, color: "var(--ink)", marginBottom: 4 }}>Clientes</h2>
-      <p style={{ fontSize: 13, color: "var(--muted)", marginBottom: 24 }}>Alta de financiadores, prestadores y demás organizaciones.</p>
+      <p style={{ fontSize: 13, color: "var(--muted)", marginBottom: 20 }}>Financiadores, prestadores y demás organizaciones.</p>
 
-      <div style={{ ...cardStyle, padding: 20, marginBottom: 24 }}>
-        <label style={labelStyle}>Nombre</label>
-        <input value={nombre} onChange={(e) => setNombre(e.target.value)} placeholder="Ej. OSDE" style={inputStyle} />
-
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginTop: 14 }}>
-          <div>
-            <label style={labelStyle}>Tipo</label>
-            <select value={tipo} onChange={(e) => setTipo(e.target.value)} style={inputStyle}>
-              {CLIENT_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
-            </select>
-          </div>
-          <div>
-            <label style={labelStyle}>Inicio de ejercicio fiscal</label>
-            <select value={mesInicio} onChange={(e) => setMesInicio(Number(e.target.value))} style={inputStyle}>
-              {MESES.map((m, i) => <option key={i} value={i + 1}>{m}{i === 0 ? " (año calendario)" : ""}</option>)}
-            </select>
-          </div>
-        </div>
-
-        <div style={{ fontSize: 12, fontWeight: 500, color: "var(--muted)", margin: "18px 0 10px", paddingTop: 14, borderTop: "1px solid var(--border)" }}>
-          Datos de contacto y comerciales (opcional)
-        </div>
-
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
-          <div>
-            <label style={labelStyle}>Nombre de contacto</label>
-            <input value={nombreContacto} onChange={(e) => setNombreContacto(e.target.value)} style={inputStyle} />
-          </div>
-          <div>
-            <label style={labelStyle}>Teléfono de contacto</label>
-            <input value={telefonoContacto} onChange={(e) => setTelefonoContacto(e.target.value)} style={inputStyle} />
-          </div>
-        </div>
-
-        <label style={{ ...labelStyle, marginTop: 14 }}>Email de contacto</label>
-        <input type="email" value={emailContacto} onChange={(e) => setEmailContacto(e.target.value)} style={inputStyle} />
-
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginTop: 14 }}>
-          <div>
-            <label style={labelStyle}>CUIT</label>
-            <input value={cuit} onChange={(e) => setCuit(e.target.value)} placeholder="30-12345678-9" style={inputStyle} />
-          </div>
-          <div>
-            <label style={labelStyle}>Tipo de contrato</label>
-            <select value={tipoContrato} onChange={(e) => setTipoContrato(e.target.value)} style={inputStyle}>
-              {TIPOS_CONTRATO.map((t) => <option key={t} value={t}>{t}</option>)}
-            </select>
-          </div>
-        </div>
-
-        <label style={{ ...labelStyle, marginTop: 14 }}>Domicilio fiscal</label>
-        <input value={domicilioFiscal} onChange={(e) => setDomicilioFiscal(e.target.value)} style={inputStyle} />
-
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginTop: 14 }}>
-          <div>
-            <label style={labelStyle}>Localidad</label>
-            <input value={localidad} onChange={(e) => setLocalidad(e.target.value)} style={inputStyle} />
-          </div>
-          <div>
-            <label style={labelStyle}>Provincia</label>
-            <input value={provincia} onChange={(e) => setProvincia(e.target.value)} style={inputStyle} />
-          </div>
-        </div>
-
-        {error && <div style={{ marginTop: 12, fontSize: 12.5, color: "#A13333", background: "#FBE7E7", padding: "8px 10px", borderRadius: 8 }}>{error}</div>}
-
-        <button onClick={addCliente} disabled={!nombre.trim() || saving} style={{ ...btnPrimary(!!nombre.trim()), marginTop: 16 }}>
-          <Plus size={16} /> {saving ? "Guardando..." : "Crear cliente"}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap", marginBottom: 16 }}>
+        <button onClick={openNew} style={btnPrimary(true)}>
+          <Plus size={15} /> Nuevo cliente
         </button>
-        <div style={{ fontSize: 11.5, color: "var(--muted)", marginTop: 8 }}>El contrato (archivo) se adjunta después de crear el cliente, abriendo su ficha abajo.</div>
+        <div style={{ position: "relative", flex: "1 1 260px", maxWidth: 360 }}>
+          <Search size={15} color="var(--muted)" style={{ position: "absolute", left: 11, top: "50%", transform: "translateY(-50%)" }} />
+          <input
+            value={search} onChange={(e) => setSearch(e.target.value)}
+            placeholder="Buscar por nombre, sigla o CUIT..."
+            style={{ ...inputStyle, paddingLeft: 34 }}
+          />
+        </div>
       </div>
+
+      {showForm && (
+        <div
+          onClick={() => setShowForm(false)}
+          style={{ position: "fixed", inset: 0, background: "rgba(15,37,71,0.4)", zIndex: 1000, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "40px 20px", overflowY: "auto" }}
+        >
+          <div onClick={(e) => e.stopPropagation()} style={{ ...cardStyle, padding: 20, maxWidth: 780, width: "100%" }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
+              <div style={{ fontSize: 14, fontWeight: 600, color: "var(--ink)" }}>{editingId ? "Editar cliente" : "Nuevo cliente"}</div>
+              <button onClick={() => setShowForm(false)} style={{ border: "none", background: "transparent", cursor: "pointer", color: "var(--muted)" }}>
+                <X size={16} />
+              </button>
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+              <div>
+                <label style={labelStyle}>Nombre</label>
+                <input value={form.nombre} onChange={(e) => setCampo("nombre", e.target.value)} placeholder="Ej. OSDE" style={inputStyle} />
+              </div>
+              <div>
+                <label style={labelStyle}>Sigla</label>
+                <input value={form.sigla} onChange={(e) => setCampo("sigla", e.target.value)} placeholder="Ej. OSDE" style={inputStyle} />
+              </div>
+              <div>
+                <label style={labelStyle}>Tipo</label>
+                <select value={form.tipo} onChange={(e) => setCampo("tipo", e.target.value)} style={inputStyle}>
+                  {CLIENT_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+                </select>
+              </div>
+              <div>
+                <label style={labelStyle}>Inicio de ejercicio fiscal</label>
+                <select value={form.mes_inicio_ejercicio} onChange={(e) => setCampo("mes_inicio_ejercicio", Number(e.target.value))} style={inputStyle}>
+                  {MESES.map((m, i) => <option key={i} value={i + 1}>{m}{i === 0 ? " (año calendario)" : ""}</option>)}
+                </select>
+              </div>
+              <div>
+                <label style={labelStyle}>Nombre de contacto</label>
+                <input value={form.nombre_contacto} onChange={(e) => setCampo("nombre_contacto", e.target.value)} style={inputStyle} />
+              </div>
+              <div>
+                <label style={labelStyle}>Teléfono de contacto</label>
+                <input value={form.telefono_contacto} onChange={(e) => setCampo("telefono_contacto", e.target.value)} style={inputStyle} />
+              </div>
+              <div>
+                <label style={labelStyle}>Email de contacto</label>
+                <input type="email" value={form.email_contacto} onChange={(e) => setCampo("email_contacto", e.target.value)} style={inputStyle} />
+              </div>
+              <div>
+                <label style={labelStyle}>CUIT</label>
+                <input value={form.cuit} onChange={(e) => setCampo("cuit", e.target.value)} placeholder="30-12345678-9" style={inputStyle} />
+              </div>
+              <div>
+                <label style={labelStyle}>Tipo de contrato</label>
+                <select value={form.tipo_contrato} onChange={(e) => setCampo("tipo_contrato", e.target.value)} style={inputStyle}>
+                  {TIPOS_CONTRATO.map((t) => <option key={t} value={t}>{t}</option>)}
+                </select>
+              </div>
+              <div>
+                <label style={labelStyle}>Domicilio fiscal</label>
+                <input value={form.domicilio_fiscal} onChange={(e) => setCampo("domicilio_fiscal", e.target.value)} style={inputStyle} />
+              </div>
+              <div>
+                <label style={labelStyle}>Localidad</label>
+                <input value={form.localidad} onChange={(e) => setCampo("localidad", e.target.value)} style={inputStyle} />
+              </div>
+              <div>
+                <label style={labelStyle}>Provincia</label>
+                <input value={form.provincia} onChange={(e) => setCampo("provincia", e.target.value)} style={inputStyle} />
+              </div>
+            </div>
+
+            {formError && <div style={{ marginTop: 12, fontSize: 12.5, color: "#A13333", background: "#FBE7E7", padding: "8px 10px", borderRadius: 8 }}>{formError}</div>}
+
+            <button onClick={guardarCliente} disabled={!form.nombre.trim() || saving} style={{ ...btnPrimary(!!form.nombre.trim()), marginTop: 16 }}>
+              {saving ? "Guardando..." : editingId ? "Guardar cambios" : "Crear cliente"}
+            </button>
+
+            <div style={{ marginTop: 24, paddingTop: 18, borderTop: "1px solid var(--border)" }}>
+              <div style={{ fontSize: 13.5, fontWeight: 600, color: "var(--ink)", marginBottom: 4 }}>Planes</div>
+              {!editingId ? (
+                <div style={{ fontSize: 12.5, color: "var(--muted)" }}>Los planes se agregan después de crear el cliente.</div>
+              ) : (
+                <>
+                  <p style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10 }}>
+                    Cada plan puede tener su propio contrato adjunto (para saber exactamente qué cubre). Los afiliados se vinculan a uno de estos planes desde el Padrón.
+                  </p>
+                  {planes.length > 0 && (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 12 }}>
+                      {planes.map((p) => <PlanRow key={p.id} plan={p} clienteId={editingId} onChanged={() => loadPlanes(editingId)} />)}
+                    </div>
+                  )}
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <input value={planNombre} onChange={(e) => setPlanNombre(e.target.value)} placeholder="Nombre del plan (ej. 210, Binario)" style={{ ...inputStyle, flex: 1 }} />
+                    <button onClick={agregarPlan} disabled={!planNombre.trim() || planSaving} style={btnPrimary(!!planNombre.trim())}>
+                      {planSaving ? "Agregando..." : "Agregar plan"}
+                    </button>
+                  </div>
+                  {planError && <div style={{ marginTop: 10, fontSize: 12.5, color: "#A13333", background: "#FBE7E7", padding: "8px 10px", borderRadius: 8 }}>{planError}</div>}
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {loading ? (
         <div style={{ fontSize: 13, color: "var(--muted)" }}>Cargando...</div>
-      ) : clientes.length === 0 ? (
-        <EmptyState icon={Building2} text="Todavía no hay clientes cargados." />
+      ) : filtrados.length === 0 ? (
+        <EmptyState icon={Building2} text={clientes.length === 0 ? "Todavía no hay clientes cargados." : "Ningún cliente coincide con la búsqueda."} />
       ) : (
-        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-          {clientes.map((c) => (
-            <ClienteCard key={c.id} c={c} expanded={expandedId === c.id} onToggle={() => setExpandedId(expandedId === c.id ? null : c.id)} onChanged={load} />
-          ))}
+        <div style={{ ...cardStyle, overflowX: "auto" }}>
+          <table style={{ borderCollapse: "collapse", width: "100%" }}>
+            <thead>
+              <tr>
+                <th style={thStyle}>Nombre</th>
+                <th style={thStyle}>Sigla</th>
+                <th style={thStyle}>Tipo</th>
+                <th style={thStyle}>CUIT</th>
+                <th style={thStyle}>Contacto</th>
+                <th style={thStyle}>Teléfono</th>
+                <th style={thStyle}>Localidad</th>
+                <th style={thStyle}>Provincia</th>
+                <th style={thStyle}>Ejercicio desde</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtrados.map((c) => (
+                <tr
+                  key={c.id} onClick={() => openEdit(c)} style={{ cursor: "pointer" }}
+                  onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg)"; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
+                >
+                  <td style={{ ...tdStyle, fontWeight: 500 }}>{c.nombre}</td>
+                  <td style={tdStyle}>{c.sigla || "—"}</td>
+                  <td style={tdStyle}>{c.tipo || "—"}</td>
+                  <td style={tdStyle}>{c.cuit || "—"}</td>
+                  <td style={tdStyle}>{c.nombre_contacto || "—"}</td>
+                  <td style={tdStyle}>{c.telefono_contacto || "—"}</td>
+                  <td style={tdStyle}>{c.localidad || "—"}</td>
+                  <td style={tdStyle}>{c.provincia || "—"}</td>
+                  <td style={tdStyle}>{MESES[(c.mes_inicio_ejercicio || 1) - 1]}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
     </div>
   );
 }
 
-function ClienteCard({ c, expanded, onToggle, onChanged }) {
+function PlanRow({ plan, clienteId, onChanged }) {
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState("");
-  const [editing, setEditing] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [saveError, setSaveError] = useState("");
-  const [form, setForm] = useState(null);
-
-  const startEdit = () => {
-    setForm({
-      nombre: c.nombre || "", tipo: c.tipo, mes_inicio_ejercicio: c.mes_inicio_ejercicio,
-      nombre_contacto: c.nombre_contacto || "", telefono_contacto: c.telefono_contacto || "",
-      email_contacto: c.email_contacto || "", cuit: c.cuit || "",
-      domicilio_fiscal: c.domicilio_fiscal || "", localidad: c.localidad || "",
-      provincia: c.provincia || "", tipo_contrato: c.tipo_contrato || TIPOS_CONTRATO[0],
-    });
-    setEditing(true); setSaveError("");
-  };
-
-  const guardarEdicion = async () => {
-    if (!form.nombre.trim()) return;
-    setSaving(true); setSaveError("");
-    const { error } = await supabase.from("clientes").update({
-      nombre: form.nombre.trim(), tipo: form.tipo, mes_inicio_ejercicio: form.mes_inicio_ejercicio,
-      nombre_contacto: form.nombre_contacto.trim() || null, telefono_contacto: form.telefono_contacto.trim() || null,
-      email_contacto: form.email_contacto.trim() || null, cuit: form.cuit.trim() || null,
-      domicilio_fiscal: form.domicilio_fiscal.trim() || null, localidad: form.localidad.trim() || null,
-      provincia: form.provincia.trim() || null, tipo_contrato: form.tipo_contrato,
-    }).eq("id", c.id);
-    setSaving(false);
-    if (error) { setSaveError(error.message); return; }
-    setEditing(false);
-    onChanged();
-  };
 
   const handleFile = async (e) => {
     const file = e.target.files[0];
@@ -1261,146 +1399,31 @@ function ClienteCard({ c, expanded, onToggle, onChanged }) {
     if (!file) return;
     setUploading(true); setUploadError("");
     const safeName = file.name.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-zA-Z0-9.\-_]/g, "_");
-    const path = `${c.id}/${Date.now()}-${safeName}`;
+    const path = `${clienteId}/planes/${plan.id}/${Date.now()}-${safeName}`;
     const { error: upErr } = await supabase.storage.from("contratos").upload(path, file);
     if (upErr) { setUploadError(upErr.message); setUploading(false); return; }
-    await supabase.from("clientes").update({ contrato_ruta: path }).eq("id", c.id);
+    await supabase.from("planes").update({ contrato_ruta: path }).eq("id", plan.id);
     setUploading(false);
     onChanged();
   };
 
-  const viewContrato = async () => {
-    if (!c.contrato_ruta) return;
-    const { data, error } = await supabase.storage.from("contratos").createSignedUrl(c.contrato_ruta, 60);
-    if (!error && data) window.open(data.signedUrl, "_blank");
-  };
-
   return (
-    <div style={cardStyle}>
-      <button onClick={onToggle} style={{
-        width: "100%", textAlign: "left", background: "transparent", border: "none", cursor: "pointer",
-        padding: "12px 14px", display: "flex", alignItems: "center", justifyContent: "space-between", fontFamily: "var(--font-body)",
-      }}>
-        <div>
-          <div style={{ fontSize: 14, fontWeight: 500, color: "var(--ink)" }}>{c.nombre}</div>
-          <div style={{ fontSize: 12, color: "var(--muted)" }}>{c.tipo}</div>
-        </div>
-        <div style={{ fontSize: 12, color: "var(--muted)" }}>Ejercicio desde {MESES[c.mes_inicio_ejercicio - 1]}</div>
-      </button>
-
-      {expanded && editing && (
-        <div style={{ padding: "0 14px 16px", borderTop: "1px solid var(--border)" }}>
-          <div style={{ marginTop: 14 }}>
-            <label style={labelStyle}>Nombre</label>
-            <input value={form.nombre} onChange={(e) => setForm({ ...form, nombre: e.target.value })} style={inputStyle} />
-          </div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginTop: 14 }}>
-            <div>
-              <label style={labelStyle}>Tipo</label>
-              <select value={form.tipo} onChange={(e) => setForm({ ...form, tipo: e.target.value })} style={inputStyle}>
-                {CLIENT_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
-              </select>
-            </div>
-            <div>
-              <label style={labelStyle}>Inicio de ejercicio fiscal</label>
-              <select value={form.mes_inicio_ejercicio} onChange={(e) => setForm({ ...form, mes_inicio_ejercicio: Number(e.target.value) })} style={inputStyle}>
-                {MESES.map((m, i) => <option key={i} value={i + 1}>{m}{i === 0 ? " (año calendario)" : ""}</option>)}
-              </select>
-            </div>
-          </div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginTop: 14 }}>
-            <div>
-              <label style={labelStyle}>Nombre de contacto</label>
-              <input value={form.nombre_contacto} onChange={(e) => setForm({ ...form, nombre_contacto: e.target.value })} style={inputStyle} />
-            </div>
-            <div>
-              <label style={labelStyle}>Teléfono de contacto</label>
-              <input value={form.telefono_contacto} onChange={(e) => setForm({ ...form, telefono_contacto: e.target.value })} style={inputStyle} />
-            </div>
-          </div>
-          <label style={{ ...labelStyle, marginTop: 14 }}>Email de contacto</label>
-          <input type="email" value={form.email_contacto} onChange={(e) => setForm({ ...form, email_contacto: e.target.value })} style={inputStyle} />
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginTop: 14 }}>
-            <div>
-              <label style={labelStyle}>CUIT</label>
-              <input value={form.cuit} onChange={(e) => setForm({ ...form, cuit: e.target.value })} style={inputStyle} />
-            </div>
-            <div>
-              <label style={labelStyle}>Tipo de contrato</label>
-              <select value={form.tipo_contrato} onChange={(e) => setForm({ ...form, tipo_contrato: e.target.value })} style={inputStyle}>
-                {TIPOS_CONTRATO.map((t) => <option key={t} value={t}>{t}</option>)}
-              </select>
-            </div>
-          </div>
-          <label style={{ ...labelStyle, marginTop: 14 }}>Domicilio fiscal</label>
-          <input value={form.domicilio_fiscal} onChange={(e) => setForm({ ...form, domicilio_fiscal: e.target.value })} style={inputStyle} />
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginTop: 14 }}>
-            <div>
-              <label style={labelStyle}>Localidad</label>
-              <input value={form.localidad} onChange={(e) => setForm({ ...form, localidad: e.target.value })} style={inputStyle} />
-            </div>
-            <div>
-              <label style={labelStyle}>Provincia</label>
-              <input value={form.provincia} onChange={(e) => setForm({ ...form, provincia: e.target.value })} style={inputStyle} />
-            </div>
-          </div>
-
-          {saveError && <div style={{ marginTop: 12, fontSize: 12.5, color: "#A13333", background: "#FBE7E7", padding: "8px 10px", borderRadius: 8 }}>{saveError}</div>}
-
-          <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
-            <button onClick={guardarEdicion} disabled={!form.nombre.trim() || saving} style={btnPrimary(!!form.nombre.trim())}>
-              {saving ? "Guardando..." : "Guardar cambios"}
-            </button>
-            <button onClick={() => setEditing(false)} style={{
-              padding: "11px 16px", borderRadius: 9, border: "1px solid var(--border)", background: "transparent",
-              cursor: "pointer", fontSize: 14, fontFamily: "var(--font-body)", color: "var(--muted)",
-            }}>
-              Cancelar
-            </button>
-          </div>
-        </div>
-      )}
-
-      {expanded && !editing && (
-        <div style={{ padding: "0 14px 16px", borderTop: "1px solid var(--border)" }}>
-          <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 14 }}>
-            <button onClick={startEdit} style={{
-              fontSize: 12.5, fontWeight: 500, color: "var(--primary-dark)", background: "transparent",
-              border: "none", cursor: "pointer", fontFamily: "var(--font-body)",
-            }}>
-              Editar datos
-            </button>
-          </div>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 20, fontSize: 13, margin: "6px 0 14px" }}>
-            <Field label="Contacto" value={c.nombre_contacto || "—"} />
-            <Field label="Teléfono" value={c.telefono_contacto || "—"} />
-            <Field label="Email" value={c.email_contacto || "—"} />
-            <Field label="CUIT" value={c.cuit || "—"} />
-            <Field label="Tipo de contrato" value={c.tipo_contrato || "—"} />
-            <Field label="Domicilio fiscal" value={c.domicilio_fiscal || "—"} />
-            <Field label="Localidad" value={c.localidad || "—"} />
-            <Field label="Provincia" value={c.provincia || "—"} />
-          </div>
-
-          <div style={{ fontSize: 12, fontWeight: 500, color: "var(--muted)", marginBottom: 8 }}>Contrato</div>
-          {c.contrato_ruta ? (
-            <button onClick={viewContrato} style={{
-              display: "flex", alignItems: "center", gap: 8, padding: "7px 10px", borderRadius: 8,
-              border: "1px solid var(--border)", background: "var(--surface)", cursor: "pointer",
-              fontSize: 12.5, color: "var(--ink)", fontFamily: "var(--font-body)", marginBottom: 8,
-            }}>
-              <FileText size={14} color="var(--muted)" /> Ver contrato adjunto
-            </button>
-          ) : (
-            <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 8 }}>Todavía no hay contrato adjunto.</div>
-          )}
-          <label style={{ fontSize: 12, fontWeight: 500, color: "var(--primary-dark)", cursor: uploading ? "default" : "pointer", display: "flex", alignItems: "center", gap: 5 }}>
-            <Paperclip size={13} /> {uploading ? "Subiendo..." : (c.contrato_ruta ? "Reemplazar contrato" : "Adjuntar contrato")}
-            <input type="file" onChange={handleFile} disabled={uploading} style={{ display: "none" }} />
-          </label>
-          {uploadError && <div style={{ marginTop: 8, fontSize: 12, color: "#A13333", background: "#FBE7E7", padding: "6px 10px", borderRadius: 8 }}>{uploadError}</div>}
-        </div>
-      )}
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, padding: "8px 12px", border: "1px solid var(--border)", borderRadius: 8, flexWrap: "wrap" }}>
+      <div style={{ fontSize: 13, fontWeight: 500, color: "var(--ink)" }}>{plan.nombre}</div>
+      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        {plan.contrato_ruta ? (
+          <button onClick={() => verContratoStorage(plan.contrato_ruta)} style={{ display: "flex", alignItems: "center", gap: 6, border: "none", background: "transparent", cursor: "pointer", fontSize: 12, color: "var(--primary-dark)", fontFamily: "var(--font-body)" }}>
+            <FileText size={13} /> Ver contrato
+          </button>
+        ) : (
+          <span style={{ fontSize: 11.5, color: "var(--muted)" }}>Sin contrato</span>
+        )}
+        <label style={{ fontSize: 12, fontWeight: 500, color: "var(--primary-dark)", cursor: uploading ? "default" : "pointer", display: "flex", alignItems: "center", gap: 5 }}>
+          <Paperclip size={12} /> {uploading ? "Subiendo..." : (plan.contrato_ruta ? "Reemplazar" : "Adjuntar")}
+          <input type="file" onChange={handleFile} disabled={uploading} style={{ display: "none" }} />
+        </label>
+      </div>
+      {uploadError && <div style={{ width: "100%", fontSize: 11.5, color: "#A13333" }}>{uploadError}</div>}
     </div>
   );
 }
