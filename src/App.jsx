@@ -720,7 +720,7 @@ function NewCaseView({ perfil, onCreated, goTo }) {
 
   const submit = async () => {
     if (!title.trim() || !clienteId) return;
-    setSaving(true); setError(""); setLastCreated(null);
+    setSaving(true); setError("");
     const { error } = await supabase.from("casos").insert({
       tipo, cliente_id: clienteId,
       afiliado_id: afiliadoId || null,
@@ -729,27 +729,14 @@ function NewCaseView({ perfil, onCreated, goTo }) {
     });
     setSaving(false);
     if (error) { setError(error.message); return; }
-    setLastCreated(title.trim());
-    setTitle(""); setTitleTouched(false); setDescription(""); setDetailValue(""); setDetailName("");
     onCreated();
+    goTo("casos");
   };
 
   return (
     <div style={{ maxWidth: 920, margin: "0 auto", padding: "28px 32px" }}>
       <h2 style={{ fontFamily: "var(--font-display)", fontWeight: 600, fontSize: 19, color: "var(--ink)", marginBottom: 4 }}>Nuevo caso</h2>
       <p style={{ fontSize: 13, color: "var(--muted)", marginBottom: 24 }}>El plazo de respuesta y el auditor se calculan solos.</p>
-
-      {lastCreated && (
-        <div style={{
-          display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap",
-          background: "#EAF3DE", color: "#27500A", padding: "10px 14px", borderRadius: 10, fontSize: 13, marginBottom: 20,
-        }}>
-          <span>✓ Caso creado: <strong>{lastCreated}</strong>. Podés cargar otra prestación para el mismo afiliado, o</span>
-          <button onClick={() => goTo("casos")} style={{ background: "transparent", border: "none", color: "#1F4F45", fontWeight: 600, cursor: "pointer", fontSize: 13, fontFamily: "var(--font-body)", textDecoration: "underline" }}>
-            ir a Casos
-          </button>
-        </div>
-      )}
 
       <div style={{ display: "grid", gridTemplateColumns: isFixedCliente ? "1fr" : "1fr 1fr", gap: 14 }}>
         {!isFixedCliente && (
@@ -835,7 +822,7 @@ function NewCaseView({ perfil, onCreated, goTo }) {
 
 /* ---------- casos ---------- */
 
-function CasesView({ refreshKey, perfil }) {
+function CasesView({ refreshKey, perfil, goTo }) {
   const [casos, setCasos] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -857,7 +844,7 @@ function CasesView({ refreshKey, perfil }) {
     let active = true;
     setLoading(true);
     supabase.from("casos")
-      .select("id, titulo, descripcion, tipo, estado, prioridad, vence_en, creado_en, clientes(nombre), afiliados(nombre, numero_afiliado, plan_id), asignado:perfiles!casos_asignado_a_fkey(nombre)")
+      .select("id, titulo, descripcion, tipo, estado, prioridad, vence_en, creado_en, creado_por, clientes(nombre), afiliados(nombre, numero_afiliado, plan_id), asignado:perfiles!casos_asignado_a_fkey(nombre)")
       .order("creado_en", { ascending: false })
       .then(({ data, error }) => {
         if (!active) return;
@@ -881,9 +868,14 @@ function CasesView({ refreshKey, perfil }) {
 
   return (
     <div style={{ maxWidth: 1100, margin: "0 auto", padding: "28px 24px" }}>
-      <h2 style={{ fontFamily: "var(--font-display)", fontWeight: 600, fontSize: 19, color: "var(--ink)", marginBottom: 4 }}>
-        Casos ({filtered.length})
-      </h2>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap", marginBottom: 4 }}>
+        <h2 style={{ fontFamily: "var(--font-display)", fontWeight: 600, fontSize: 19, color: "var(--ink)" }}>
+          Casos ({filtered.length})
+        </h2>
+        <button onClick={() => goTo("nuevo")} style={btnPrimary(true)}>
+          <Plus size={15} /> Nuevo caso
+        </button>
+      </div>
       <p style={{ fontSize: 13, color: "var(--muted)", marginBottom: 16 }}>Filtrados automáticamente según tu acceso.</p>
 
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 16 }}>
@@ -967,7 +959,7 @@ function CasesView({ refreshKey, perfil }) {
   );
 }
 
-function CaseModal({ c, now, canDecide, onClose, onChanged }) {
+function CaseModal({ c, now, canDecide, perfil, onClose, onChanged }) {
   const [notas, setNotas] = useState([]);
   const [loadingNotas, setLoadingNotas] = useState(false);
   const [note, setNote] = useState("");
@@ -977,6 +969,12 @@ function CaseModal({ c, now, canDecide, onClose, onChanged }) {
   const [loadingAdjuntos, setLoadingAdjuntos] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState("");
+
+  const canEditOwn = perfil?.id && c.creado_por === perfil.id && (now - new Date(c.creado_en).getTime() < 2 * 60 * 60 * 1000);
+  const [showEdit, setShowEdit] = useState(false);
+  const [editForm, setEditForm] = useState({ titulo: c.titulo, tipo: c.tipo, prioridad: c.prioridad, descripcion: c.descripcion || "" });
+  const [savingEdit, setSavingEdit] = useState(false);
+  const [editError, setEditError] = useState("");
 
   const st = STATUS_STYLE[c.estado] || { bg: "#eee", fg: "#333" };
   const sla = slaInfo(c.vence_en, c.estado, now);
@@ -995,6 +993,19 @@ function CaseModal({ c, now, canDecide, onClose, onChanged }) {
     setSavingStatus(true);
     await supabase.from("casos").update({ estado }).eq("id", c.id);
     setSavingStatus(false);
+    onChanged();
+  };
+
+  const guardarEdicion = async () => {
+    if (!editForm.titulo.trim()) return;
+    setSavingEdit(true); setEditError("");
+    const { error } = await supabase.from("casos").update({
+      titulo: editForm.titulo.trim(), tipo: editForm.tipo, prioridad: editForm.prioridad,
+      descripcion: editForm.descripcion.trim() || null,
+    }).eq("id", c.id);
+    setSavingEdit(false);
+    if (error) { setEditError(error.message); return; }
+    setShowEdit(false);
     onChanged();
   };
 
@@ -1045,10 +1056,52 @@ function CaseModal({ c, now, canDecide, onClose, onChanged }) {
             <div style={{ fontSize: 16, fontWeight: 600, color: "var(--ink)", marginTop: 2 }}>{c.titulo}</div>
             <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 2 }}>{c.tipo} · {c.clientes?.nombre || "—"}</div>
           </div>
-          <button onClick={onClose} style={{ border: "none", background: "transparent", cursor: "pointer", color: "var(--muted)" }}>
-            <X size={16} />
-          </button>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            {canEditOwn && !showEdit && (
+              <button onClick={() => setShowEdit(true)} style={{ border: "none", background: "transparent", cursor: "pointer", fontSize: 12, fontWeight: 500, color: "var(--primary-dark)", fontFamily: "var(--font-body)" }}>
+                Editar
+              </button>
+            )}
+            <button onClick={onClose} style={{ border: "none", background: "transparent", cursor: "pointer", color: "var(--muted)" }}>
+              <X size={16} />
+            </button>
+          </div>
         </div>
+
+        {canEditOwn && showEdit && (
+          <div style={{ ...cardStyle, background: "var(--bg)", padding: 14, marginTop: 10, marginBottom: 4 }}>
+            <div style={{ fontSize: 11.5, color: "var(--muted)", marginBottom: 10 }}>
+              Podés editar este caso hasta 2 horas después de haberlo cargado.
+            </div>
+            <label style={labelStyle}>Título</label>
+            <input value={editForm.titulo} onChange={(e) => setEditForm((f) => ({ ...f, titulo: e.target.value }))} style={inputStyle} />
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 12 }}>
+              <div>
+                <label style={labelStyle}>Tipo de auditoría</label>
+                <select value={editForm.tipo} onChange={(e) => setEditForm((f) => ({ ...f, tipo: e.target.value }))} style={inputStyle}>
+                  {CASE_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+                </select>
+              </div>
+              <div>
+                <label style={labelStyle}>Prioridad</label>
+                <select value={editForm.prioridad} onChange={(e) => setEditForm((f) => ({ ...f, prioridad: e.target.value }))} style={inputStyle}>
+                  {PRIORITIES.map((p) => <option key={p} value={p}>{p}</option>)}
+                </select>
+              </div>
+            </div>
+            <label style={{ ...labelStyle, marginTop: 12 }}>Descripción</label>
+            <textarea value={editForm.descripcion} onChange={(e) => setEditForm((f) => ({ ...f, descripcion: e.target.value }))} rows={3} style={{ ...inputStyle, resize: "vertical" }} />
+            {editError && <div style={{ marginTop: 10, fontSize: 12, color: "#A13333", background: "#FBE7E7", padding: "8px 10px", borderRadius: 8 }}>{editError}</div>}
+            <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+              <button onClick={guardarEdicion} disabled={!editForm.titulo.trim() || savingEdit} style={btnPrimary(!!editForm.titulo.trim())}>
+                {savingEdit ? "Guardando..." : "Guardar cambios"}
+              </button>
+              <button onClick={() => setShowEdit(false)} style={{ padding: "11px 16px", borderRadius: 9, border: "1px solid var(--border)", background: "transparent", cursor: "pointer", fontSize: 13.5, fontFamily: "var(--font-body)", color: "var(--muted)" }}>
+                Cancelar
+              </button>
+            </div>
+          </div>
+        )}
 
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10 }}>
           <Pill bg={st.bg} fg={st.fg}>{c.estado}</Pill>
@@ -1559,7 +1612,10 @@ function emptyPrestadorForm() {
   return { nombre: "", cuit: "", activo: true };
 }
 
-function PrestadoresView() {
+function PrestadoresView({ perfil }) {
+  const isAdmin = perfil.rol === "Administrador";
+  const isAdminCliente = perfil.rol === "Administrador Cliente";
+
   const [prestadores, setPrestadores] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
@@ -1573,6 +1629,7 @@ function PrestadoresView() {
   const [clientes, setClientes] = useState([]);
   const [linkedIds, setLinkedIds] = useState(new Set());
   const [linkError, setLinkError] = useState("");
+  const [financiadorQuery, setFinanciadorQuery] = useState("");
 
   const load = () => {
     setLoading(true);
@@ -1582,8 +1639,15 @@ function PrestadoresView() {
   useEffect(load, []);
 
   useEffect(() => {
-    supabase.from("clientes").select("id, nombre").order("nombre").then(({ data }) => setClientes(data || []));
-  }, []);
+    if (!isAdmin) return;
+    supabase.from("clientes").select("id, nombre, sigla").order("nombre").then(({ data }) => setClientes(data || []));
+  }, [isAdmin]);
+
+  useEffect(() => {
+    if (!isAdminCliente) return;
+    supabase.from("prestador_clientes").select("prestador_id").eq("cliente_id", perfil.cliente_id)
+      .then(({ data }) => setLinkedIds(new Set((data || []).map((r) => r.prestador_id))));
+  }, [isAdminCliente]);
 
   const loadLinks = (prestadorId) => {
     if (!prestadorId) { setLinkedIds(new Set()); return; }
@@ -1596,11 +1660,11 @@ function PrestadoresView() {
     (p.nombre || "").toLowerCase().includes(q) || (p.cuit || "").toLowerCase().includes(q)
   );
 
-  const openNew = () => { setEditingId(null); setForm(emptyPrestadorForm()); setFormError(""); setLinkedIds(new Set()); setShowForm(true); };
+  const openNew = () => { setEditingId(null); setForm(emptyPrestadorForm()); setFormError(""); setLinkedIds(new Set()); setFinanciadorQuery(""); setShowForm(true); };
   const openEdit = (p) => {
     setEditingId(p.id);
     setForm({ nombre: p.nombre || "", cuit: p.cuit || "", activo: p.activo });
-    setFormError(""); setLinkError("");
+    setFormError(""); setLinkError(""); setFinanciadorQuery("");
     loadLinks(p.id);
     setShowForm(true);
   };
@@ -1624,6 +1688,7 @@ function PrestadoresView() {
     }
   };
 
+  // Administrador: tilda/destilda qué financiadores trabajan con el prestador que está editando
   const toggleFinanciador = async (clienteId) => {
     if (!editingId) return;
     setLinkError("");
@@ -1638,25 +1703,47 @@ function PrestadoresView() {
     }
   };
 
+  // Administrador Cliente: tilda/destilda si ESE prestador trabaja con SU propio financiador
+  const toggleMiVinculo = async (prestadorId) => {
+    setLinkError("");
+    if (linkedIds.has(prestadorId)) {
+      const { error } = await supabase.from("prestador_clientes").delete().eq("prestador_id", prestadorId).eq("cliente_id", perfil.cliente_id);
+      if (error) { setLinkError(error.message); return; }
+      setLinkedIds((prev) => { const next = new Set(prev); next.delete(prestadorId); return next; });
+    } else {
+      const { error } = await supabase.from("prestador_clientes").insert({ prestador_id: prestadorId, cliente_id: perfil.cliente_id });
+      if (error) { setLinkError(error.message); return; }
+      setLinkedIds((prev) => new Set(prev).add(prestadorId));
+    }
+  };
+
   const thStyle = { textAlign: "left", padding: "10px 10px", fontSize: 11, fontWeight: 700, letterSpacing: "0.04em", textTransform: "uppercase", color: "var(--primary-dark)", background: "var(--primary-tint)", borderBottom: "2px solid var(--primary)", whiteSpace: "nowrap" };
   const tdStyle = { padding: "9px 10px", fontSize: 13, color: "var(--ink)", borderBottom: "1px solid var(--border)", whiteSpace: "nowrap" };
 
   return (
     <div style={{ maxWidth: 1000, margin: "0 auto", padding: "28px 24px" }}>
       <h2 style={{ fontFamily: "var(--font-display)", fontWeight: 600, fontSize: 19, color: "var(--ink)", marginBottom: 4 }}>Prestadores</h2>
-      <p style={{ fontSize: 13, color: "var(--muted)", marginBottom: 20 }}>Consultorios, clínicas y profesionales contratados por los financiadores. Un prestador puede trabajar con varios financiadores a la vez.</p>
+      <p style={{ fontSize: 13, color: "var(--muted)", marginBottom: 20 }}>
+        {isAdmin
+          ? "Consultorios, clínicas y profesionales contratados por los financiadores. Un prestador puede trabajar con varios financiadores a la vez."
+          : "Tildá los prestadores con los que trabajás. Solo ellos van a poder cargar casos y ver el padrón de tu organización."}
+      </p>
 
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap", marginBottom: 16 }}>
-        <button onClick={openNew} style={btnPrimary(true)}>
-          <Plus size={15} /> Nuevo prestador
-        </button>
+        {isAdmin ? (
+          <button onClick={openNew} style={btnPrimary(true)}>
+            <Plus size={15} /> Nuevo prestador
+          </button>
+        ) : <div />}
         <div style={{ position: "relative", flex: "1 1 260px", maxWidth: 360 }}>
           <Search size={15} color="var(--muted)" style={{ position: "absolute", left: 11, top: "50%", transform: "translateY(-50%)" }} />
           <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Buscar por nombre o CUIT..." style={{ ...inputStyle, paddingLeft: 34 }} />
         </div>
       </div>
 
-      {showForm && (
+      {linkError && <div style={{ marginBottom: 12, fontSize: 12.5, color: "#A13333", background: "#FBE7E7", padding: "8px 10px", borderRadius: 8 }}>{linkError}</div>}
+
+      {isAdmin && showForm && (
         <div onClick={() => setShowForm(false)} style={{ position: "fixed", inset: 0, background: "rgba(15,37,71,0.4)", zIndex: 1000, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "40px 20px", overflowY: "auto" }}>
           <div onClick={(e) => e.stopPropagation()} style={{ ...cardStyle, padding: 20, maxWidth: 640, width: "100%" }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
@@ -1697,17 +1784,63 @@ function PrestadoresView() {
               ) : (
                 <>
                   <p style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10 }}>
-                    Tildá los financiadores que contrataron a este prestador. Va a poder cargar casos y ver el padrón solo de estos.
+                    Buscá y agregá los financiadores que contrataron a este prestador. Va a poder cargar casos y ver el padrón solo de estos.
                   </p>
-                  <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 240, overflowY: "auto" }}>
-                    {clientes.map((c) => (
-                      <label key={c.id} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "var(--ink)", cursor: "pointer" }}>
-                        <input type="checkbox" checked={linkedIds.has(c.id)} onChange={() => toggleFinanciador(c.id)} />
-                        {c.nombre}
-                      </label>
-                    ))}
+
+                  {linkedIds.size > 0 && (
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
+                      {clientes.filter((c) => linkedIds.has(c.id)).map((c) => (
+                        <span key={c.id} style={{
+                          display: "inline-flex", alignItems: "center", gap: 6, padding: "5px 10px", borderRadius: 20,
+                          background: "var(--primary-tint)", border: "1px solid var(--primary)", fontSize: 12.5, color: "var(--primary-dark)",
+                        }}>
+                          {c.nombre}
+                          <button onClick={() => toggleFinanciador(c.id)} style={{ border: "none", background: "transparent", cursor: "pointer", padding: 0, display: "flex", color: "var(--primary-dark)" }}>
+                            <X size={12} />
+                          </button>
+                        </span>
+                      ))}
+                    </div>
+                  )}
+
+                  <div style={{ position: "relative" }}>
+                    <Search size={14} color="var(--muted)" style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)" }} />
+                    <input
+                      value={financiadorQuery} onChange={(e) => setFinanciadorQuery(e.target.value)}
+                      placeholder="Buscar financiador por nombre o sigla..." style={{ ...inputStyle, paddingLeft: 30 }}
+                    />
                   </div>
-                  {linkError && <div style={{ marginTop: 10, fontSize: 12.5, color: "#A13333", background: "#FBE7E7", padding: "8px 10px", borderRadius: 8 }}>{linkError}</div>}
+                  {financiadorQuery.trim() && (
+                    <div style={{ marginTop: 6, border: "1px solid var(--border)", borderRadius: 8, maxHeight: 200, overflowY: "auto" }}>
+                      {clientes
+                        .filter((c) => !linkedIds.has(c.id))
+                        .filter((c) => {
+                          const q = financiadorQuery.trim().toLowerCase();
+                          return (c.nombre || "").toLowerCase().includes(q) || (c.sigla || "").toLowerCase().includes(q);
+                        })
+                        .slice(0, 8)
+                        .map((c) => (
+                          <button
+                            key={c.id}
+                            onClick={() => { toggleFinanciador(c.id); setFinanciadorQuery(""); }}
+                            style={{
+                              display: "block", width: "100%", textAlign: "left", padding: "8px 10px", border: "none",
+                              background: "transparent", cursor: "pointer", fontSize: 13, color: "var(--ink)", fontFamily: "var(--font-body)",
+                            }}
+                            onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg)"; }}
+                            onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
+                          >
+                            {c.nombre}{c.sigla ? " · " + c.sigla : ""}
+                          </button>
+                        ))}
+                      {clientes.filter((c) => !linkedIds.has(c.id)).filter((c) => {
+                        const q = financiadorQuery.trim().toLowerCase();
+                        return (c.nombre || "").toLowerCase().includes(q) || (c.sigla || "").toLowerCase().includes(q);
+                      }).length === 0 && (
+                        <div style={{ padding: "8px 10px", fontSize: 12.5, color: "var(--muted)" }}>Sin resultados.</div>
+                      )}
+                    </div>
+                  )}
                 </>
               )}
             </div>
@@ -1726,21 +1859,31 @@ function PrestadoresView() {
               <tr>
                 <th style={thStyle}>Nombre</th>
                 <th style={thStyle}>CUIT</th>
-                <th style={thStyle}>Estado</th>
+                {isAdmin && <th style={thStyle}>Estado</th>}
+                {isAdminCliente && <th style={thStyle}>Trabaja con nosotros</th>}
               </tr>
             </thead>
             <tbody>
               {filtrados.map((p) => (
                 <tr
-                  key={p.id} onClick={() => openEdit(p)} style={{ cursor: "pointer" }}
-                  onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg)"; }}
+                  key={p.id}
+                  onClick={() => { if (isAdmin) openEdit(p); }}
+                  style={{ cursor: isAdmin ? "pointer" : "default" }}
+                  onMouseEnter={(e) => { if (isAdmin) e.currentTarget.style.background = "var(--bg)"; }}
                   onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
                 >
                   <td style={{ ...tdStyle, fontWeight: 500 }}>{p.nombre}</td>
                   <td style={tdStyle}>{p.cuit || "—"}</td>
-                  <td style={tdStyle}>
-                    <Pill bg={p.activo ? "#EAF3DE" : "#FCEBEB"} fg={p.activo ? "#27500A" : "#791F1F"}>{p.activo ? "Activo" : "Inactivo"}</Pill>
-                  </td>
+                  {isAdmin && (
+                    <td style={tdStyle}>
+                      <Pill bg={p.activo ? "#EAF3DE" : "#FCEBEB"} fg={p.activo ? "#27500A" : "#791F1F"}>{p.activo ? "Activo" : "Inactivo"}</Pill>
+                    </td>
+                  )}
+                  {isAdminCliente && (
+                    <td style={tdStyle}>
+                      <input type="checkbox" checked={linkedIds.has(p.id)} onChange={() => toggleMiVinculo(p.id)} />
+                    </td>
+                  )}
                 </tr>
               ))}
             </tbody>
@@ -2009,19 +2152,18 @@ function buildNavGroups(perfil) {
           { key: "reglas", label: "Reglas del cliente", icon: ShieldCheck, view: "reglas" },
         ],
       });
-      adminItems.push({ key: "prestadores", label: "Prestadores", icon: Stethoscope, view: "prestadores" });
     } else {
       adminItems.push({ key: "reglas", label: "Reglas del cliente", icon: ShieldCheck, view: "reglas" });
     }
+    adminItems.push({ key: "prestadores", label: "Prestadores", icon: Stethoscope, view: "prestadores" });
     groups.push({ key: "admin", label: "Administración", items: adminItems });
   }
 
   groups.push({ key: "auditoria", label: "Auditoría", items: [
-    { key: "nuevo", label: "Nuevo caso", icon: Plus, view: "nuevo" },
     { key: "casos", label: "Casos", icon: ClipboardList, view: "casos" },
   ] });
 
-  if (perfil.rol !== "Administrador") {
+  if (perfil.rol !== "Administrador" && perfil.rol !== "Prestador") {
     groups.push({ key: "padron", label: "Padrón", items: [
       { key: "padron", label: "Padrón", icon: Users, view: "padron" },
     ] });
@@ -2044,6 +2186,16 @@ function buildNavGroups(perfil) {
   }
 
   return groups;
+}
+
+// Vistas que el rol puede alcanzar según el menú, más las que se llegan por botón (no por nav)
+function allowedViewsFor(perfil) {
+  const keys = new Set(["nuevo"]);
+  buildNavGroups(perfil).forEach((g) => g.items.forEach((item) => {
+    keys.add(item.view);
+    if (item.children) item.children.forEach((c) => keys.add(c.view));
+  }));
+  return keys;
 }
 
 function Sidebar({ perfil, view, setView }) {
@@ -2175,15 +2327,16 @@ function AppShell({ session }) {
     supabase.from("perfiles").select("nombre, rol, cliente_id, clientes(nombre), prestador_id, prestadores(nombre)").eq("id", session.user.id).single()
       .then(async ({ data }) => {
         if (!data) { setPerfil(null); return; }
-        let p = { ...data, cliente_nombre: data.clientes?.nombre, prestador_nombre: data.prestadores?.nombre };
+        let p = { ...data, id: session.user.id, cliente_nombre: data.clientes?.nombre, prestador_nombre: data.prestadores?.nombre };
         if (data.rol === "Prestador" && data.prestador_id) {
           const { data: pc } = await supabase.from("prestador_clientes").select("clientes(id, nombre)").eq("prestador_id", data.prestador_id);
           p.clientesContratados = (pc || []).map((row) => row.clientes).filter(Boolean);
         }
         setPerfil(p);
+        const allowed = allowedViewsFor(p);
         let saved = null;
         try { saved = localStorage.getItem("da_salud_view"); } catch { /* ignore */ }
-        setViewRaw(saved || ((p.rol === "Auditor" || p.rol === "Coordinador" || p.rol === "Administrador") ? "casos" : "padron"));
+        setViewRaw(saved && allowed.has(saved) ? saved : "casos");
       });
   }, [session]);
 
@@ -2218,7 +2371,7 @@ function AppShell({ session }) {
               <div style={{ fontSize: 12.5, fontWeight: 500, color: "var(--ink)" }}>{perfil.nombre}</div>
               <div style={{ fontSize: 11, color: "var(--muted)" }}>{perfil.rol}</div>
             </div>
-            <button onClick={() => supabase.auth.signOut()} style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 12px", borderRadius: 8, border: "1px solid var(--border)", background: "transparent", cursor: "pointer", fontSize: 12.5, fontFamily: "var(--font-body)" }}>
+            <button onClick={() => { try { localStorage.removeItem("da_salud_view"); } catch { /* ignore */ } supabase.auth.signOut(); }} style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 12px", borderRadius: 8, border: "1px solid var(--border)", background: "transparent", cursor: "pointer", fontSize: 12.5, fontFamily: "var(--font-body)" }}>
               <LogOut size={14} /> Salir
             </button>
           </div>
@@ -2227,9 +2380,9 @@ function AppShell({ session }) {
         <div style={{ flex: 1, minWidth: 0 }}>
           {view === "padron" && <PadronView perfil={perfil} />}
           {view === "nuevo" && <NewCaseView perfil={perfil} goTo={setView} onCreated={() => setRefreshKey((k) => k + 1)} />}
-          {view === "casos" && <CasesView refreshKey={refreshKey} perfil={perfil} />}
+          {view === "casos" && <CasesView refreshKey={refreshKey} perfil={perfil} goTo={setView} />}
           {view === "clientes" && <ClientesView />}
-          {view === "prestadores" && <PrestadoresView />}
+          {view === "prestadores" && <PrestadoresView perfil={perfil} />}
           {view === "reglas" && <ReglasView perfil={perfil} />}
           {view === "censo-camas" && <ProximamenteView titulo="Censo de camas" descripcion="Vas a poder cargar el estado de cada cama (disponible, ocupada o bloqueada) y el afiliado internado, día por día. Es lo próximo que vamos a construir." />}
           {view === "facturacion" && <ProximamenteView titulo="Facturación y recuperos" descripcion="Control de prestaciones facturadas, validación contra lo autorizado y documentado, débitos y detección de oportunidades de recupero." />}
