@@ -138,10 +138,14 @@ async function georefFetch(recurso, params) {
     const qs = new URLSearchParams(params).toString();
     const res = await fetch(`${GEOREF_BASE}/${recurso}?${qs}`);
     const data = await res.json();
-    return (data[recurso] || []).map((x) => x.nombre);
+    return data[recurso] || [];
   } catch {
     return [];
   }
+}
+
+function georefIdFor(lista, nombre) {
+  return lista.find((x) => x.nombre === nombre)?.id;
 }
 
 function PadronView({ perfil }) {
@@ -172,18 +176,22 @@ function PadronView({ perfil }) {
   const [localidades, setLocalidades] = useState([]);
 
   useEffect(() => {
-    georefFetch("provincias", { campos: "nombre", max: 24, orden: "nombre" }).then(setProvincias);
+    georefFetch("provincias", { campos: "id,nombre", max: 24, orden: "nombre" }).then(setProvincias);
   }, []);
 
   useEffect(() => {
     if (!form.provincia) { setPartidos([]); return; }
-    georefFetch("departamentos", { provincia: form.provincia, campos: "nombre", max: 300, orden: "nombre" }).then(setPartidos);
-  }, [form.provincia]);
+    const provinciaId = georefIdFor(provincias, form.provincia);
+    if (!provinciaId) { setPartidos([]); return; }
+    georefFetch("departamentos", { provincia: provinciaId, campos: "id,nombre", max: 300, orden: "nombre" }).then(setPartidos);
+  }, [form.provincia, provincias]);
 
   useEffect(() => {
-    if (!form.provincia || !form.partido) { setLocalidades([]); return; }
-    georefFetch("localidades", { provincia: form.provincia, departamento: form.partido, campos: "nombre", max: 500, orden: "nombre" }).then(setLocalidades);
-  }, [form.provincia, form.partido]);
+    if (!form.partido) { setLocalidades([]); return; }
+    const partidoId = georefIdFor(partidos, form.partido);
+    if (!partidoId) { setLocalidades([]); return; }
+    georefFetch("localidades", { departamento: partidoId, campos: "id,nombre", max: 800, orden: "nombre" }).then(setLocalidades);
+  }, [form.partido, partidos]);
 
   useEffect(() => {
     if (!isDaSalud) return;
@@ -386,8 +394,8 @@ function PadronView({ perfil }) {
                     style={inputStyle}
                   >
                     <option value="">Seleccionar...</option>
-                    {(form.provincia && !provincias.includes(form.provincia)) && <option value={form.provincia}>{form.provincia}</option>}
-                    {provincias.map((p) => <option key={p} value={p}>{p}</option>)}
+                    {(form.provincia && !provincias.some((p) => p.nombre === form.provincia)) && <option value={form.provincia}>{form.provincia}</option>}
+                    {provincias.map((p) => <option key={p.id} value={p.nombre}>{p.nombre}</option>)}
                   </select>
                 </div>
                 <div>
@@ -399,8 +407,8 @@ function PadronView({ perfil }) {
                     disabled={!form.provincia}
                   >
                     <option value="">{form.provincia ? "Seleccionar..." : "Elegí primero la provincia"}</option>
-                    {(form.partido && !partidos.includes(form.partido)) && <option value={form.partido}>{form.partido}</option>}
-                    {partidos.map((p) => <option key={p} value={p}>{p}</option>)}
+                    {(form.partido && !partidos.some((p) => p.nombre === form.partido)) && <option value={form.partido}>{form.partido}</option>}
+                    {partidos.map((p) => <option key={p.id} value={p.nombre}>{p.nombre}</option>)}
                   </select>
                 </div>
                 <div>
@@ -412,8 +420,8 @@ function PadronView({ perfil }) {
                     disabled={!form.partido}
                   >
                     <option value="">{form.partido ? "Seleccionar..." : "Elegí primero el partido"}</option>
-                    {(form.localidad && !localidades.includes(form.localidad)) && <option value={form.localidad}>{form.localidad}</option>}
-                    {localidades.map((l) => <option key={l} value={l}>{l}</option>)}
+                    {(form.localidad && !localidades.some((l) => l.nombre === form.localidad)) && <option value={form.localidad}>{form.localidad}</option>}
+                    {localidades.map((l) => <option key={l.id} value={l.nombre}>{l.nombre}</option>)}
                   </select>
                 </div>
                 <div>
@@ -1113,7 +1121,7 @@ function emptyClienteForm() {
   return {
     nombre: "", sigla: "", tipo: CLIENT_TYPES[0], mes_inicio_ejercicio: 1,
     nombre_contacto: "", telefono_contacto: "", email_contacto: "", cuit: "",
-    domicilio_fiscal: "", localidad: "", provincia: "", tipo_contrato: TIPOS_CONTRATO[0],
+    domicilio_fiscal: "", localidad: "", departamento: "", provincia: "", tipo_contrato: TIPOS_CONTRATO[0],
   };
 }
 
@@ -1145,6 +1153,28 @@ function ClientesView() {
   const [planSaving, setPlanSaving] = useState(false);
   const [planError, setPlanError] = useState("");
 
+  const [provincias, setProvincias] = useState([]);
+  const [departamentos, setDepartamentos] = useState([]);
+  const [localidades, setLocalidades] = useState([]);
+
+  useEffect(() => {
+    georefFetch("provincias", { campos: "id,nombre", max: 24, orden: "nombre" }).then(setProvincias);
+  }, []);
+
+  useEffect(() => {
+    if (!form.provincia) { setDepartamentos([]); return; }
+    const provinciaId = georefIdFor(provincias, form.provincia);
+    if (!provinciaId) { setDepartamentos([]); return; }
+    georefFetch("departamentos", { provincia: provinciaId, campos: "id,nombre", max: 300, orden: "nombre" }).then(setDepartamentos);
+  }, [form.provincia, provincias]);
+
+  useEffect(() => {
+    if (!form.departamento) { setLocalidades([]); return; }
+    const departamentoId = georefIdFor(departamentos, form.departamento);
+    if (!departamentoId) { setLocalidades([]); return; }
+    georefFetch("localidades", { departamento: departamentoId, campos: "id,nombre", max: 800, orden: "nombre" }).then(setLocalidades);
+  }, [form.departamento, departamentos]);
+
   const load = () => {
     setLoading(true);
     supabase.from("clientes").select("*").order("nombre")
@@ -1173,7 +1203,7 @@ function ClientesView() {
       mes_inicio_ejercicio: c.mes_inicio_ejercicio || 1,
       nombre_contacto: c.nombre_contacto || "", telefono_contacto: c.telefono_contacto || "",
       email_contacto: c.email_contacto || "", cuit: c.cuit || "",
-      domicilio_fiscal: c.domicilio_fiscal || "", localidad: c.localidad || "",
+      domicilio_fiscal: c.domicilio_fiscal || "", localidad: c.localidad || "", departamento: c.departamento || "",
       provincia: c.provincia || "", tipo_contrato: c.tipo_contrato || TIPOS_CONTRATO[0],
     });
     setFormError(""); setPlanNombre(""); setPlanError("");
@@ -1191,7 +1221,7 @@ function ClientesView() {
       nombre_contacto: form.nombre_contacto.trim() || null, telefono_contacto: form.telefono_contacto.trim() || null,
       email_contacto: form.email_contacto.trim() || null, cuit: form.cuit.trim() || null,
       domicilio_fiscal: form.domicilio_fiscal.trim() || null, localidad: form.localidad.trim() || null,
-      provincia: form.provincia.trim() || null, tipo_contrato: form.tipo_contrato,
+      departamento: form.departamento.trim() || null, provincia: form.provincia.trim() || null, tipo_contrato: form.tipo_contrato,
     };
     if (editingId) {
       const { error } = await supabase.from("clientes").update(payload).eq("id", editingId);
@@ -1217,7 +1247,7 @@ function ClientesView() {
     loadPlanes(editingId);
   };
 
-  const thStyle = { textAlign: "left", padding: "9px 10px", fontSize: 11, fontWeight: 600, letterSpacing: "0.03em", textTransform: "uppercase", color: "var(--muted)", borderBottom: "1px solid var(--border)", whiteSpace: "nowrap" };
+  const thStyle = { textAlign: "left", padding: "10px 10px", fontSize: 11, fontWeight: 700, letterSpacing: "0.04em", textTransform: "uppercase", color: "var(--primary-dark)", background: "var(--primary-tint)", borderBottom: "2px solid var(--primary)", whiteSpace: "nowrap" };
   const tdStyle = { padding: "9px 10px", fontSize: 13, color: "var(--ink)", borderBottom: "1px solid var(--border)", whiteSpace: "nowrap" };
 
   return (
@@ -1300,12 +1330,42 @@ function ClientesView() {
                 <input value={form.domicilio_fiscal} onChange={(e) => setCampo("domicilio_fiscal", e.target.value)} style={inputStyle} />
               </div>
               <div>
-                <label style={labelStyle}>Localidad</label>
-                <input value={form.localidad} onChange={(e) => setCampo("localidad", e.target.value)} style={inputStyle} />
+                <label style={labelStyle}>Provincia</label>
+                <select
+                  value={form.provincia}
+                  onChange={(e) => setForm((f) => ({ ...f, provincia: e.target.value, departamento: "", localidad: "" }))}
+                  style={inputStyle}
+                >
+                  <option value="">Seleccionar...</option>
+                  {(form.provincia && !provincias.some((p) => p.nombre === form.provincia)) && <option value={form.provincia}>{form.provincia}</option>}
+                  {provincias.map((p) => <option key={p.id} value={p.nombre}>{p.nombre}</option>)}
+                </select>
               </div>
               <div>
-                <label style={labelStyle}>Provincia</label>
-                <input value={form.provincia} onChange={(e) => setCampo("provincia", e.target.value)} style={inputStyle} />
+                <label style={labelStyle}>Departamento/Partido</label>
+                <select
+                  value={form.departamento}
+                  onChange={(e) => setForm((f) => ({ ...f, departamento: e.target.value, localidad: "" }))}
+                  style={inputStyle}
+                  disabled={!form.provincia}
+                >
+                  <option value="">{form.provincia ? "Seleccionar..." : "Elegí primero la provincia"}</option>
+                  {(form.departamento && !departamentos.some((d) => d.nombre === form.departamento)) && <option value={form.departamento}>{form.departamento}</option>}
+                  {departamentos.map((d) => <option key={d.id} value={d.nombre}>{d.nombre}</option>)}
+                </select>
+              </div>
+              <div>
+                <label style={labelStyle}>Localidad</label>
+                <select
+                  value={form.localidad}
+                  onChange={(e) => setCampo("localidad", e.target.value)}
+                  style={inputStyle}
+                  disabled={!form.departamento}
+                >
+                  <option value="">{form.departamento ? "Seleccionar..." : "Elegí primero el departamento"}</option>
+                  {(form.localidad && !localidades.some((l) => l.nombre === form.localidad)) && <option value={form.localidad}>{form.localidad}</option>}
+                  {localidades.map((l) => <option key={l.id} value={l.nombre}>{l.nombre}</option>)}
+                </select>
               </div>
             </div>
 
@@ -1358,6 +1418,7 @@ function ClientesView() {
                 <th style={thStyle}>CUIT</th>
                 <th style={thStyle}>Contacto</th>
                 <th style={thStyle}>Teléfono</th>
+                <th style={thStyle}>Departamento</th>
                 <th style={thStyle}>Localidad</th>
                 <th style={thStyle}>Provincia</th>
                 <th style={thStyle}>Ejercicio desde</th>
@@ -1376,6 +1437,7 @@ function ClientesView() {
                   <td style={tdStyle}>{c.cuit || "—"}</td>
                   <td style={tdStyle}>{c.nombre_contacto || "—"}</td>
                   <td style={tdStyle}>{c.telefono_contacto || "—"}</td>
+                  <td style={tdStyle}>{c.departamento || "—"}</td>
                   <td style={tdStyle}>{c.localidad || "—"}</td>
                   <td style={tdStyle}>{c.provincia || "—"}</td>
                   <td style={tdStyle}>{MESES[(c.mes_inicio_ejercicio || 1) - 1]}</td>
