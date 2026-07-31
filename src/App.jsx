@@ -1967,7 +1967,7 @@ function ReglasView({ perfil }) {
   };
 
   return (
-    <div style={{ maxWidth: 640, margin: "0 auto", padding: "28px 24px" }}>
+    <div style={{ maxWidth: 1200, margin: "0 auto", padding: "28px 24px" }}>
       <h2 style={{ fontFamily: "var(--font-display)", fontWeight: 600, fontSize: 19, color: "var(--ink)", marginBottom: 4 }}>Reglas de autorización</h2>
       <p style={{ fontSize: 13, color: "var(--muted)", marginBottom: 24 }}>
         Cantidad por año, o intervalo mínimo entre solicitudes. Al no cumplirse, el sistema no deja cargar el caso y pide gestionar una autorización especial.
