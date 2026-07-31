@@ -835,7 +835,7 @@ function CasesView({ refreshKey, perfil }) {
   const [statusFilter, setStatusFilter] = useState("all");
   const [tipoFilter, setTipoFilter] = useState("all");
   const [now, setNow] = useState(Date.now());
-  const [expandedId, setExpandedId] = useState(null);
+  const [openId, setOpenId] = useState(null);
   const [bump, setBump] = useState(0);
 
   const canDecide = perfil.rol === "Auditor" || perfil.rol === "Coordinador" || perfil.rol === "Administrador";
@@ -866,8 +866,13 @@ function CasesView({ refreshKey, perfil }) {
     return true;
   });
 
+  const openCase = openId ? casos.find((c) => c.id === openId) : null;
+
+  const thStyle = { textAlign: "left", padding: "10px 10px", fontSize: 11, fontWeight: 700, letterSpacing: "0.04em", textTransform: "uppercase", color: "var(--primary-dark)", background: "var(--primary-tint)", borderBottom: "2px solid var(--primary)", whiteSpace: "nowrap" };
+  const tdStyle = { padding: "9px 10px", fontSize: 13, color: "var(--ink)", borderBottom: "1px solid var(--border)", whiteSpace: "nowrap" };
+
   return (
-    <div style={{ maxWidth: 760, margin: "0 auto", padding: "28px 24px" }}>
+    <div style={{ maxWidth: 1100, margin: "0 auto", padding: "28px 24px" }}>
       <h2 style={{ fontFamily: "var(--font-display)", fontWeight: 600, fontSize: 19, color: "var(--ink)", marginBottom: 4 }}>
         Casos ({filtered.length})
       </h2>
@@ -895,23 +900,66 @@ function CasesView({ refreshKey, perfil }) {
         filtered.length === 0 ? (
           <EmptyState icon={Inbox} text="No hay casos para mostrar todavía." />
         ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {filtered.map((c) => (
-              <CaseCard
-                key={c.id} c={c} now={now} canDecide={canDecide} perfil={perfil}
-                expanded={expandedId === c.id}
-                onToggle={() => setExpandedId(expandedId === c.id ? null : c.id)}
-                onChanged={() => setBump((b) => b + 1)}
-              />
-            ))}
+          <div style={{ ...cardStyle, overflowX: "auto" }}>
+            <table style={{ borderCollapse: "collapse", width: "100%" }}>
+              <thead>
+                <tr>
+                  <th style={thStyle}>Código</th>
+                  <th style={thStyle}>Título</th>
+                  <th style={thStyle}>Tipo</th>
+                  <th style={thStyle}>Cliente</th>
+                  <th style={thStyle}>Afiliado</th>
+                  <th style={thStyle}>Asignado a</th>
+                  <th style={thStyle}>Estado</th>
+                  <th style={thStyle}>Vencimiento</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map((c) => {
+                  const st = STATUS_STYLE[c.estado] || { bg: "#eee", fg: "#333" };
+                  const sla = slaInfo(c.vence_en, c.estado, now);
+                  const tone = TONE_COLORS[sla.tone];
+                  return (
+                    <tr
+                      key={c.id}
+                      onClick={() => setOpenId(c.id)}
+                      style={{ cursor: "pointer" }}
+                      onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg)"; }}
+                      onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
+                    >
+                      <td style={{ ...tdStyle, fontFamily: "var(--font-mono)" }}>{displayCode(c.id)}</td>
+                      <td style={{ ...tdStyle, fontWeight: 500 }}>{c.titulo}</td>
+                      <td style={tdStyle}>{c.tipo}</td>
+                      <td style={tdStyle}>{c.clientes?.nombre || "—"}</td>
+                      <td style={tdStyle}>{c.afiliados?.nombre || "—"}</td>
+                      <td style={tdStyle}>{c.asignado?.nombre || "Sin asignar"}</td>
+                      <td style={tdStyle}><Pill bg={st.bg} fg={st.fg}>{c.estado}</Pill></td>
+                      <td style={tdStyle}>
+                        <span style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "3px 9px", borderRadius: 6, fontSize: 12, fontWeight: 500, background: tone.bg, color: tone.fg, fontFamily: "var(--font-mono)" }}>
+                          <Clock size={12} /> {sla.label}
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
         )
+      )}
+
+      {openCase && (
+        <CaseModal
+          c={openCase} now={now} canDecide={canDecide} perfil={perfil}
+          onClose={() => setOpenId(null)}
+          onChanged={() => setBump((b) => b + 1)}
+        />
       )}
     </div>
   );
 }
 
-function CaseCard({ c, now, canDecide, perfil, expanded, onToggle, onChanged }) {
+function CaseModal({ c, now, canDecide, onClose, onChanged }) {
   const [notas, setNotas] = useState([]);
   const [loadingNotas, setLoadingNotas] = useState(false);
   const [note, setNote] = useState("");
@@ -927,14 +975,13 @@ function CaseCard({ c, now, canDecide, perfil, expanded, onToggle, onChanged }) 
   const tone = TONE_COLORS[sla.tone];
 
   useEffect(() => {
-    if (!expanded) return;
     setLoadingNotas(true);
     supabase.from("notas").select("texto, creado_en").eq("caso_id", c.id).order("creado_en", { ascending: false })
       .then(({ data }) => { setNotas(data || []); setLoadingNotas(false); });
     setLoadingAdjuntos(true);
     supabase.from("adjuntos").select("id, nombre_archivo, ruta, creado_en").eq("caso_id", c.id).order("creado_en", { ascending: false })
       .then(({ data }) => { setAdjuntos(data || []); setLoadingAdjuntos(false); });
-  }, [expanded, c.id]);
+  }, [c.id]);
 
   const changeStatus = async (estado) => {
     setSavingStatus(true);
@@ -979,113 +1026,114 @@ function CaseCard({ c, now, canDecide, perfil, expanded, onToggle, onChanged }) 
   };
 
   return (
-    <div style={{ ...cardStyle, overflow: "hidden" }}>
-      <button onClick={onToggle} style={{
-        width: "100%", textAlign: "left", background: "transparent", border: "none", cursor: "pointer",
-        padding: "13px 16px", display: "flex", flexDirection: "column", gap: 6, fontFamily: "var(--font-body)",
-      }}>
-        <span style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--muted)" }}>{displayCode(c.id)}</span>
-        <div style={{ fontSize: 14, fontWeight: 500, color: "var(--ink)" }}>{c.titulo}</div>
-        <div style={{ fontSize: 12, color: "var(--muted)" }}>
-          {c.tipo} · {c.clientes?.nombre || "—"}
-          {c.asignado?.nombre ? " · asignado a " + c.asignado.nombre : " · sin asignar"}
+    <div
+      onClick={onClose}
+      style={{ position: "fixed", inset: 0, background: "rgba(15,37,71,0.4)", zIndex: 1000, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "40px 20px", overflowY: "auto" }}
+    >
+      <div onClick={(e) => e.stopPropagation()} style={{ ...cardStyle, padding: 20, maxWidth: 640, width: "100%" }}>
+        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 14, marginBottom: 4 }}>
+          <div>
+            <span style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--muted)" }}>{displayCode(c.id)}</span>
+            <div style={{ fontSize: 16, fontWeight: 600, color: "var(--ink)", marginTop: 2 }}>{c.titulo}</div>
+            <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 2 }}>{c.tipo} · {c.clientes?.nombre || "—"}</div>
+          </div>
+          <button onClick={onClose} style={{ border: "none", background: "transparent", cursor: "pointer", color: "var(--muted)" }}>
+            <X size={16} />
+          </button>
         </div>
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 2 }}>
+
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10 }}>
           <Pill bg={st.bg} fg={st.fg}>{c.estado}</Pill>
           <span style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "3px 9px", borderRadius: 6, fontSize: 12, fontWeight: 500, background: tone.bg, color: tone.fg, fontFamily: "var(--font-mono)" }}>
             <Clock size={12} /> {sla.label}
           </span>
         </div>
-      </button>
 
-      {expanded && (
-        <div style={{ padding: "0 16px 16px", borderTop: "1px solid var(--border)" }}>
-          {c.descripcion && (
-            <div style={{ fontSize: 13, color: "var(--ink)", background: "var(--bg)", padding: 12, borderRadius: 8, margin: "14px 0" }}>
-              {c.descripcion}
-            </div>
-          )}
-          <div style={{ display: "flex", gap: 20, flexWrap: "wrap", fontSize: 13, marginBottom: 14, marginTop: c.descripcion ? 0 : 14 }}>
-            <div>
-              <div style={{ fontSize: 11, color: "var(--muted)" }}>Afiliado</div>
-              <div style={{ fontWeight: 500, color: "var(--ink)" }}>{c.afiliados?.nombre || "—"}{c.afiliados?.numero_afiliado ? " · N° " + c.afiliados.numero_afiliado : ""}</div>
-              {c.afiliados?.plan_id && (
-                <button onClick={() => verContratoDePlan(c.afiliados.plan_id)} style={{ display: "flex", alignItems: "center", gap: 4, border: "none", background: "transparent", cursor: "pointer", fontSize: 11.5, color: "var(--primary-dark)", fontFamily: "var(--font-body)", padding: 0, marginTop: 3 }}>
-                  <FileText size={11} /> Ver contrato del plan
-                </button>
-              )}
-            </div>
-            <div>
-              <div style={{ fontSize: 11, color: "var(--muted)" }}>Asignado a</div>
-              <div style={{ fontWeight: 500, color: "var(--ink)" }}>{c.asignado?.nombre || "Sin asignar"}</div>
-            </div>
-            <div>
-              <div style={{ fontSize: 11, color: "var(--muted)" }}>Prioridad</div>
-              <div style={{ fontWeight: 500, color: "var(--ink)" }}>{c.prioridad}</div>
-            </div>
+        {c.descripcion && (
+          <div style={{ fontSize: 13, color: "var(--ink)", background: "var(--bg)", padding: 12, borderRadius: 8, margin: "14px 0" }}>
+            {c.descripcion}
           </div>
-
-          {canDecide && (
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 16 }}>
-              {STATUSES.map((s) => (
-                <button key={s} disabled={savingStatus || c.estado === s} onClick={() => changeStatus(s)} style={{
-                  padding: "6px 12px", borderRadius: 7, fontSize: 12, fontWeight: 500, fontFamily: "var(--font-body)",
-                  border: c.estado === s ? "1.5px solid var(--primary)" : "1px solid var(--border)",
-                  background: c.estado === s ? "var(--primary-tint)" : "var(--surface)",
-                  color: c.estado === s ? "var(--primary-dark)" : "var(--ink)",
-                  cursor: c.estado === s ? "default" : "pointer",
-                }}>
-                  {s}
-                </button>
-              ))}
-            </div>
-          )}
-
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
-            <span style={{ fontSize: 12, fontWeight: 500, color: "var(--muted)" }}>
-              Adjuntos {loadingAdjuntos ? "" : `(${adjuntos.length})`}
-            </span>
-            <label style={{
-              fontSize: 12, fontWeight: 500, color: "var(--primary-dark)", cursor: uploading ? "default" : "pointer",
-              display: "flex", alignItems: "center", gap: 5,
-            }}>
-              <Paperclip size={13} /> {uploading ? "Subiendo..." : "Adjuntar archivo"}
-              <input type="file" onChange={handleFile} disabled={uploading} style={{ display: "none" }} />
-            </label>
+        )}
+        <div style={{ display: "flex", gap: 20, flexWrap: "wrap", fontSize: 13, marginBottom: 14, marginTop: c.descripcion ? 0 : 14 }}>
+          <div>
+            <div style={{ fontSize: 11, color: "var(--muted)" }}>Afiliado</div>
+            <div style={{ fontWeight: 500, color: "var(--ink)" }}>{c.afiliados?.nombre || "—"}{c.afiliados?.numero_afiliado ? " · N° " + c.afiliados.numero_afiliado : ""}</div>
+            {c.afiliados?.plan_id && (
+              <button onClick={() => verContratoDePlan(c.afiliados.plan_id)} style={{ display: "flex", alignItems: "center", gap: 4, border: "none", background: "transparent", cursor: "pointer", fontSize: 11.5, color: "var(--primary-dark)", fontFamily: "var(--font-body)", padding: 0, marginTop: 3 }}>
+                <FileText size={11} /> Ver contrato del plan
+              </button>
+            )}
           </div>
-          {uploadError && <div style={{ fontSize: 12, color: "#791F1F", background: "#FCEBEB", padding: "6px 10px", borderRadius: 8, marginBottom: 8 }}>{uploadError}</div>}
-          <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 16 }}>
-            {!loadingAdjuntos && adjuntos.length === 0 && <div style={{ fontSize: 12, color: "var(--muted)" }}>Todavía no hay archivos adjuntos.</div>}
-            {adjuntos.map((a) => (
-              <button key={a.id} onClick={() => viewFile(a.ruta)} style={{
-                display: "flex", alignItems: "center", gap: 8, padding: "7px 10px", borderRadius: 8,
-                border: "1px solid var(--border)", background: "var(--surface)", cursor: "pointer",
-                fontSize: 12.5, color: "var(--ink)", textAlign: "left", fontFamily: "var(--font-body)",
+          <div>
+            <div style={{ fontSize: 11, color: "var(--muted)" }}>Asignado a</div>
+            <div style={{ fontWeight: 500, color: "var(--ink)" }}>{c.asignado?.nombre || "Sin asignar"}</div>
+          </div>
+          <div>
+            <div style={{ fontSize: 11, color: "var(--muted)" }}>Prioridad</div>
+            <div style={{ fontWeight: 500, color: "var(--ink)" }}>{c.prioridad}</div>
+          </div>
+        </div>
+
+        {canDecide && (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 16 }}>
+            {STATUSES.map((s) => (
+              <button key={s} disabled={savingStatus || c.estado === s} onClick={() => changeStatus(s)} style={{
+                padding: "6px 12px", borderRadius: 7, fontSize: 12, fontWeight: 500, fontFamily: "var(--font-body)",
+                border: c.estado === s ? "1.5px solid var(--primary)" : "1px solid var(--border)",
+                background: c.estado === s ? "var(--primary-tint)" : "var(--surface)",
+                color: c.estado === s ? "var(--primary-dark)" : "var(--ink)",
+                cursor: c.estado === s ? "default" : "pointer",
               }}>
-                <FileText size={14} color="var(--muted)" style={{ flexShrink: 0 }} />
-                <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.nombre_archivo}</span>
+                {s}
               </button>
             ))}
           </div>
+        )}
 
-          <div style={{ fontSize: 12, fontWeight: 500, color: "var(--muted)", marginBottom: 8 }}>
-            Notas {loadingNotas ? "" : `(${notas.length})`}
-          </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 10, maxHeight: 180, overflowY: "auto" }}>
-            {!loadingNotas && notas.length === 0 && <div style={{ fontSize: 12, color: "var(--muted)" }}>Todavía no hay notas.</div>}
-            {notas.map((n, i) => (
-              <div key={i} style={{ fontSize: 12.5, background: "var(--bg)", borderRadius: 8, padding: "8px 10px" }}>
-                <span style={{ color: "var(--muted)", fontFamily: "var(--font-mono)", fontSize: 11 }}>{new Date(n.creado_en).toLocaleString("es-AR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}</span>
-                <div style={{ color: "var(--ink)", marginTop: 2 }}>{n.texto}</div>
-              </div>
-            ))}
-          </div>
-          <div style={{ display: "flex", gap: 8 }}>
-            <input value={note} onChange={(e) => setNote(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addNote()} placeholder="Agregar una nota..." style={{ ...inputStyle, flex: 1 }} />
-            <button onClick={addNote} disabled={!note.trim() || savingNote} style={btnPrimary(!!note.trim())}>Enviar</button>
-          </div>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+          <span style={{ fontSize: 12, fontWeight: 500, color: "var(--muted)" }}>
+            Adjuntos {loadingAdjuntos ? "" : `(${adjuntos.length})`}
+          </span>
+          <label style={{
+            fontSize: 12, fontWeight: 500, color: "var(--primary-dark)", cursor: uploading ? "default" : "pointer",
+            display: "flex", alignItems: "center", gap: 5,
+          }}>
+            <Paperclip size={13} /> {uploading ? "Subiendo..." : "Adjuntar archivo"}
+            <input type="file" onChange={handleFile} disabled={uploading} style={{ display: "none" }} />
+          </label>
         </div>
-      )}
+        {uploadError && <div style={{ fontSize: 12, color: "#791F1F", background: "#FCEBEB", padding: "6px 10px", borderRadius: 8, marginBottom: 8 }}>{uploadError}</div>}
+        <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 16 }}>
+          {!loadingAdjuntos && adjuntos.length === 0 && <div style={{ fontSize: 12, color: "var(--muted)" }}>Todavía no hay archivos adjuntos.</div>}
+          {adjuntos.map((a) => (
+            <button key={a.id} onClick={() => viewFile(a.ruta)} style={{
+              display: "flex", alignItems: "center", gap: 8, padding: "7px 10px", borderRadius: 8,
+              border: "1px solid var(--border)", background: "var(--surface)", cursor: "pointer",
+              fontSize: 12.5, color: "var(--ink)", textAlign: "left", fontFamily: "var(--font-body)",
+            }}>
+              <FileText size={14} color="var(--muted)" style={{ flexShrink: 0 }} />
+              <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.nombre_archivo}</span>
+            </button>
+          ))}
+        </div>
+
+        <div style={{ fontSize: 12, fontWeight: 500, color: "var(--muted)", marginBottom: 8 }}>
+          Notas {loadingNotas ? "" : `(${notas.length})`}
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 10, maxHeight: 180, overflowY: "auto" }}>
+          {!loadingNotas && notas.length === 0 && <div style={{ fontSize: 12, color: "var(--muted)" }}>Todavía no hay notas.</div>}
+          {notas.map((n, i) => (
+            <div key={i} style={{ fontSize: 12.5, background: "var(--bg)", borderRadius: 8, padding: "8px 10px" }}>
+              <span style={{ color: "var(--muted)", fontFamily: "var(--font-mono)", fontSize: 11 }}>{new Date(n.creado_en).toLocaleString("es-AR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}</span>
+              <div style={{ color: "var(--ink)", marginTop: 2 }}>{n.texto}</div>
+            </div>
+          ))}
+        </div>
+        <div style={{ display: "flex", gap: 8 }}>
+          <input value={note} onChange={(e) => setNote(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addNote()} placeholder="Agregar una nota..." style={{ ...inputStyle, flex: 1 }} />
+          <button onClick={addNote} disabled={!note.trim() || savingNote} style={btnPrimary(!!note.trim())}>Enviar</button>
+        </div>
+      </div>
     </div>
   );
 }
