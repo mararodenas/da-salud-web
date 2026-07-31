@@ -349,7 +349,12 @@ function PadronView({ perfil }) {
             >
             <div onClick={(e) => e.stopPropagation()} style={{ ...cardStyle, padding: 20, marginBottom: 20, maxWidth: 780, width: "100%" }}>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 14, marginBottom: 14, flexWrap: "wrap" }}>
-                <div style={{ fontSize: 14, fontWeight: 600, color: "var(--ink)" }}>{editingId ? "Editar afiliado" : "Nuevo afiliado"}</div>
+                <div>
+                  <div style={{ fontSize: 14, fontWeight: 600, color: "var(--ink)" }}>{editingId ? "Editar afiliado" : "Nuevo afiliado"}</div>
+                  <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 2 }}>
+                    {isDaSalud ? (clientes.find((c) => c.id === clienteId)?.nombre || "") : (perfil.cliente_nombre || "")}
+                  </div>
+                </div>
                 <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
                   <div style={{ width: 210 }}>
                     <label style={labelStyle}>Plan contratado</label>
