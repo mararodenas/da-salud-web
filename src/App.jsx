@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import {
   ClipboardList, Plus, LogOut, Users, AlertTriangle,
   Clock, Search, Inbox, Paperclip, FileText, Building2, ShieldCheck,
-  ChevronDown, ChevronRight, BedDouble, Receipt, Ambulance, BarChart3, Upload, X,
+  ChevronDown, ChevronRight, BedDouble, Receipt, Ambulance, BarChart3, Upload, X, Stethoscope,
 } from "lucide-react";
 import { supabase } from "./supabaseClient";
 import {
@@ -150,10 +150,12 @@ function georefIdFor(lista, nombre) {
 
 function PadronView({ perfil }) {
   const isDaSalud = ["Administrador", "Coordinador", "Auditor"].includes(perfil.rol);
+  const isPrestador = perfil.rol === "Prestador";
+  const needsSelector = isDaSalud || isPrestador;
   const canManage = isDaSalud || perfil.rol === "Administrador Cliente";
 
   const [clientes, setClientes] = useState([]);
-  const [clienteId, setClienteId] = useState(isDaSalud ? "" : perfil.cliente_id);
+  const [clienteId, setClienteId] = useState(needsSelector ? "" : perfil.cliente_id);
 
   const [afiliados, setAfiliados] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -194,9 +196,12 @@ function PadronView({ perfil }) {
   }, [form.partido, partidos]);
 
   useEffect(() => {
-    if (!isDaSalud) return;
-    supabase.from("clientes").select("id, nombre").order("nombre").then(({ data }) => setClientes(data || []));
-  }, [isDaSalud]);
+    if (isDaSalud) {
+      supabase.from("clientes").select("id, nombre").order("nombre").then(({ data }) => setClientes(data || []));
+    } else if (isPrestador) {
+      setClientes(perfil.clientesContratados || []);
+    }
+  }, [isDaSalud, isPrestador]);
 
   const [planes, setPlanes] = useState([]);
   useEffect(() => {
@@ -286,7 +291,7 @@ function PadronView({ perfil }) {
       <h2 style={{ fontFamily: "var(--font-display)", fontWeight: 600, fontSize: 19, color: "var(--ink)", marginBottom: 4 }}>Padrón</h2>
       <p style={{ fontSize: 13, color: "var(--muted)", marginBottom: 20 }}>Afiliados visibles para tu usuario, según las reglas de acceso reales.</p>
 
-      {isDaSalud && (
+      {needsSelector && (
         <div style={{ marginBottom: 18 }}>
           <label style={labelStyle}>Cliente</label>
           <select value={clienteId} onChange={(e) => setClienteId(e.target.value)} style={{ ...inputStyle, maxWidth: 360 }}>
@@ -633,9 +638,12 @@ function CatalogPicker({ catalogoKey, onChange, canManage }) {
 /* ---------- nuevo caso ---------- */
 
 function NewCaseView({ perfil, onCreated, goTo }) {
+  const isFixedCliente = perfil.rol === "Administrador Cliente";
+  const isPrestador = perfil.rol === "Prestador";
+
   const [clientes, setClientes] = useState([]);
   const [clienteId, setClienteIdRaw] = useState(
-    (perfil.rol === "Cliente" || perfil.rol === "Administrador Cliente") ? perfil.cliente_id : (localStorage.getItem("da_salud_nc_cliente") || "")
+    isFixedCliente ? perfil.cliente_id : (localStorage.getItem("da_salud_nc_cliente") || "")
   );
   const [afiliados, setAfiliados] = useState([]);
   const [afiliadoId, setAfiliadoIdRaw] = useState(localStorage.getItem("da_salud_nc_afiliado") || "");
@@ -665,12 +673,12 @@ function NewCaseView({ perfil, onCreated, goTo }) {
   const [error, setError] = useState("");
   const [lastCreated, setLastCreated] = useState(null);
 
-  const isClientSide = perfil.rol === "Cliente" || perfil.rol === "Administrador Cliente";
   const canManagePadron = perfil.rol === "Auditor" || perfil.rol === "Coordinador" || perfil.rol === "Administrador" || perfil.rol === "Administrador Cliente";
   const canManageCatalog = perfil.rol === "Administrador" || perfil.rol === "Administrador Cliente";
 
   useEffect(() => {
-    if (isClientSide) return;
+    if (isFixedCliente) return;
+    if (isPrestador) { setClientes(perfil.clientesContratados || []); return; }
     supabase.from("clientes").select("id, nombre, tipo").order("nombre").then(({ data }) => setClientes(data || []));
   }, [perfil.rol]);
 
@@ -743,13 +751,13 @@ function NewCaseView({ perfil, onCreated, goTo }) {
         </div>
       )}
 
-      <div style={{ display: "grid", gridTemplateColumns: isClientSide ? "1fr" : "1fr 1fr", gap: 14 }}>
-        {!isClientSide && (
+      <div style={{ display: "grid", gridTemplateColumns: isFixedCliente ? "1fr" : "1fr 1fr", gap: 14 }}>
+        {!isFixedCliente && (
           <div>
             <label style={labelStyle}>Solicitante</label>
             <select value={clienteId} onChange={(e) => setClienteId(e.target.value)} style={inputStyle}>
               <option value="">Seleccionar cliente...</option>
-              {clientes.map((c) => <option key={c.id} value={c.id}>{c.nombre} · {c.tipo}</option>)}
+              {clientes.map((c) => <option key={c.id} value={c.id}>{c.nombre}{c.tipo ? " · " + c.tipo : ""}</option>)}
             </select>
           </div>
         )}
@@ -1545,6 +1553,204 @@ function PlanRow({ plan, clienteId, onChanged }) {
 
 /* ---------- reglas de autorizacion ---------- */
 
+/* ---------- prestadores ---------- */
+
+function emptyPrestadorForm() {
+  return { nombre: "", cuit: "", activo: true };
+}
+
+function PrestadoresView() {
+  const [prestadores, setPrestadores] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState("");
+
+  const [showForm, setShowForm] = useState(false);
+  const [editingId, setEditingId] = useState(null);
+  const [form, setForm] = useState(emptyPrestadorForm());
+  const [saving, setSaving] = useState(false);
+  const [formError, setFormError] = useState("");
+
+  const [clientes, setClientes] = useState([]);
+  const [linkedIds, setLinkedIds] = useState(new Set());
+  const [linkError, setLinkError] = useState("");
+
+  const load = () => {
+    setLoading(true);
+    supabase.from("prestadores").select("*").order("nombre")
+      .then(({ data, error }) => { if (error) setFormError(error.message); else setPrestadores(data || []); setLoading(false); });
+  };
+  useEffect(load, []);
+
+  useEffect(() => {
+    supabase.from("clientes").select("id, nombre").order("nombre").then(({ data }) => setClientes(data || []));
+  }, []);
+
+  const loadLinks = (prestadorId) => {
+    if (!prestadorId) { setLinkedIds(new Set()); return; }
+    supabase.from("prestador_clientes").select("cliente_id").eq("prestador_id", prestadorId)
+      .then(({ data }) => setLinkedIds(new Set((data || []).map((r) => r.cliente_id))));
+  };
+
+  const q = search.trim().toLowerCase();
+  const filtrados = !q ? prestadores : prestadores.filter((p) =>
+    (p.nombre || "").toLowerCase().includes(q) || (p.cuit || "").toLowerCase().includes(q)
+  );
+
+  const openNew = () => { setEditingId(null); setForm(emptyPrestadorForm()); setFormError(""); setLinkedIds(new Set()); setShowForm(true); };
+  const openEdit = (p) => {
+    setEditingId(p.id);
+    setForm({ nombre: p.nombre || "", cuit: p.cuit || "", activo: p.activo });
+    setFormError(""); setLinkError("");
+    loadLinks(p.id);
+    setShowForm(true);
+  };
+  const setCampo = (campo, valor) => setForm((f) => ({ ...f, [campo]: valor }));
+
+  const guardarPrestador = async () => {
+    if (!form.nombre.trim()) return;
+    setSaving(true); setFormError("");
+    const payload = { nombre: form.nombre.trim(), cuit: form.cuit.trim() || null, activo: form.activo };
+    if (editingId) {
+      const { error } = await supabase.from("prestadores").update(payload).eq("id", editingId);
+      setSaving(false);
+      if (error) { setFormError(error.message); return; }
+      load();
+    } else {
+      const { data, error } = await supabase.from("prestadores").insert(payload).select().single();
+      setSaving(false);
+      if (error) { setFormError(error.message); return; }
+      load();
+      openEdit(data);
+    }
+  };
+
+  const toggleFinanciador = async (clienteId) => {
+    if (!editingId) return;
+    setLinkError("");
+    if (linkedIds.has(clienteId)) {
+      const { error } = await supabase.from("prestador_clientes").delete().eq("prestador_id", editingId).eq("cliente_id", clienteId);
+      if (error) { setLinkError(error.message); return; }
+      setLinkedIds((prev) => { const next = new Set(prev); next.delete(clienteId); return next; });
+    } else {
+      const { error } = await supabase.from("prestador_clientes").insert({ prestador_id: editingId, cliente_id: clienteId });
+      if (error) { setLinkError(error.message); return; }
+      setLinkedIds((prev) => new Set(prev).add(clienteId));
+    }
+  };
+
+  const thStyle = { textAlign: "left", padding: "10px 10px", fontSize: 11, fontWeight: 700, letterSpacing: "0.04em", textTransform: "uppercase", color: "var(--primary-dark)", background: "var(--primary-tint)", borderBottom: "2px solid var(--primary)", whiteSpace: "nowrap" };
+  const tdStyle = { padding: "9px 10px", fontSize: 13, color: "var(--ink)", borderBottom: "1px solid var(--border)", whiteSpace: "nowrap" };
+
+  return (
+    <div style={{ maxWidth: 1000, margin: "0 auto", padding: "28px 24px" }}>
+      <h2 style={{ fontFamily: "var(--font-display)", fontWeight: 600, fontSize: 19, color: "var(--ink)", marginBottom: 4 }}>Prestadores</h2>
+      <p style={{ fontSize: 13, color: "var(--muted)", marginBottom: 20 }}>Consultorios, clínicas y profesionales contratados por los financiadores. Un prestador puede trabajar con varios financiadores a la vez.</p>
+
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap", marginBottom: 16 }}>
+        <button onClick={openNew} style={btnPrimary(true)}>
+          <Plus size={15} /> Nuevo prestador
+        </button>
+        <div style={{ position: "relative", flex: "1 1 260px", maxWidth: 360 }}>
+          <Search size={15} color="var(--muted)" style={{ position: "absolute", left: 11, top: "50%", transform: "translateY(-50%)" }} />
+          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Buscar por nombre o CUIT..." style={{ ...inputStyle, paddingLeft: 34 }} />
+        </div>
+      </div>
+
+      {showForm && (
+        <div onClick={() => setShowForm(false)} style={{ position: "fixed", inset: 0, background: "rgba(15,37,71,0.4)", zIndex: 1000, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "40px 20px", overflowY: "auto" }}>
+          <div onClick={(e) => e.stopPropagation()} style={{ ...cardStyle, padding: 20, maxWidth: 640, width: "100%" }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
+              <div style={{ fontSize: 14, fontWeight: 600, color: "var(--ink)" }}>{editingId ? "Editar prestador" : "Nuevo prestador"}</div>
+              <button onClick={() => setShowForm(false)} style={{ border: "none", background: "transparent", cursor: "pointer", color: "var(--muted)" }}>
+                <X size={16} />
+              </button>
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+              <div>
+                <label style={labelStyle}>Nombre</label>
+                <input value={form.nombre} onChange={(e) => setCampo("nombre", e.target.value)} placeholder="Ej. Consultorio Dr. Pérez" style={inputStyle} />
+              </div>
+              <div>
+                <label style={labelStyle}>CUIT</label>
+                <input value={form.cuit} onChange={(e) => setCampo("cuit", e.target.value)} placeholder="30-12345678-9" style={inputStyle} />
+              </div>
+              <div>
+                <label style={labelStyle}>Estado</label>
+                <select value={form.activo ? "1" : "0"} onChange={(e) => setCampo("activo", e.target.value === "1")} style={inputStyle}>
+                  <option value="1">Activo</option>
+                  <option value="0">Inactivo</option>
+                </select>
+              </div>
+            </div>
+
+            {formError && <div style={{ marginTop: 12, fontSize: 12.5, color: "#A13333", background: "#FBE7E7", padding: "8px 10px", borderRadius: 8 }}>{formError}</div>}
+
+            <button onClick={guardarPrestador} disabled={!form.nombre.trim() || saving} style={{ ...btnPrimary(!!form.nombre.trim()), marginTop: 16 }}>
+              {saving ? "Guardando..." : editingId ? "Guardar cambios" : "Crear prestador"}
+            </button>
+
+            <div style={{ marginTop: 24, paddingTop: 18, borderTop: "1px solid var(--border)" }}>
+              <div style={{ fontSize: 13.5, fontWeight: 600, color: "var(--ink)", marginBottom: 4 }}>Financiadores con los que trabaja</div>
+              {!editingId ? (
+                <div style={{ fontSize: 12.5, color: "var(--muted)" }}>Se vincula después de crear el prestador.</div>
+              ) : (
+                <>
+                  <p style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10 }}>
+                    Tildá los financiadores que contrataron a este prestador. Va a poder cargar casos y ver el padrón solo de estos.
+                  </p>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 240, overflowY: "auto" }}>
+                    {clientes.map((c) => (
+                      <label key={c.id} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "var(--ink)", cursor: "pointer" }}>
+                        <input type="checkbox" checked={linkedIds.has(c.id)} onChange={() => toggleFinanciador(c.id)} />
+                        {c.nombre}
+                      </label>
+                    ))}
+                  </div>
+                  {linkError && <div style={{ marginTop: 10, fontSize: 12.5, color: "#A13333", background: "#FBE7E7", padding: "8px 10px", borderRadius: 8 }}>{linkError}</div>}
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {loading ? (
+        <div style={{ fontSize: 13, color: "var(--muted)" }}>Cargando...</div>
+      ) : filtrados.length === 0 ? (
+        <EmptyState icon={Stethoscope} text={prestadores.length === 0 ? "Todavía no hay prestadores cargados." : "Ningún prestador coincide con la búsqueda."} />
+      ) : (
+        <div style={{ ...cardStyle, overflowX: "auto" }}>
+          <table style={{ borderCollapse: "collapse", width: "100%" }}>
+            <thead>
+              <tr>
+                <th style={thStyle}>Nombre</th>
+                <th style={thStyle}>CUIT</th>
+                <th style={thStyle}>Estado</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtrados.map((p) => (
+                <tr
+                  key={p.id} onClick={() => openEdit(p)} style={{ cursor: "pointer" }}
+                  onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg)"; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
+                >
+                  <td style={{ ...tdStyle, fontWeight: 500 }}>{p.nombre}</td>
+                  <td style={tdStyle}>{p.cuit || "—"}</td>
+                  <td style={tdStyle}>
+                    <Pill bg={p.activo ? "#EAF3DE" : "#FCEBEB"} fg={p.activo ? "#27500A" : "#791F1F"}>{p.activo ? "Activo" : "Inactivo"}</Pill>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ReglasView({ perfil }) {
   const isAdminGeneral = perfil.rol === "Administrador";
   const [clientes, setClientes] = useState([]);
@@ -1803,6 +2009,7 @@ function buildNavGroups(perfil) {
           { key: "reglas", label: "Reglas del cliente", icon: ShieldCheck, view: "reglas" },
         ],
       });
+      adminItems.push({ key: "prestadores", label: "Prestadores", icon: Stethoscope, view: "prestadores" });
     } else {
       adminItems.push({ key: "reglas", label: "Reglas del cliente", icon: ShieldCheck, view: "reglas" });
     }
@@ -1830,7 +2037,7 @@ function buildNavGroups(perfil) {
     { key: "traslados", label: "Traslados", icon: Ambulance, view: "traslados" },
   ] });
 
-  if (perfil.rol !== "Cliente") {
+  if (perfil.rol !== "Prestador") {
     groups.push({ key: "bi", label: "Business Intelligence", items: [
       { key: "bi", label: "Tablero", icon: BarChart3, view: "bi" },
     ] });
@@ -1965,22 +2172,25 @@ function AppShell({ session }) {
   };
 
   useEffect(() => {
-    supabase.from("perfiles").select("nombre, rol, cliente_id, clientes(nombre)").eq("id", session.user.id).single()
-      .then(({ data }) => {
-        const p = data ? { ...data, cliente_nombre: data.clientes?.nombre } : null;
-        setPerfil(p);
-        if (p) {
-          let saved = null;
-          try { saved = localStorage.getItem("da_salud_view"); } catch { /* ignore */ }
-          setViewRaw(saved || ((p.rol === "Auditor" || p.rol === "Coordinador" || p.rol === "Administrador") ? "casos" : "padron"));
+    supabase.from("perfiles").select("nombre, rol, cliente_id, clientes(nombre), prestador_id, prestadores(nombre)").eq("id", session.user.id).single()
+      .then(async ({ data }) => {
+        if (!data) { setPerfil(null); return; }
+        let p = { ...data, cliente_nombre: data.clientes?.nombre, prestador_nombre: data.prestadores?.nombre };
+        if (data.rol === "Prestador" && data.prestador_id) {
+          const { data: pc } = await supabase.from("prestador_clientes").select("clientes(id, nombre)").eq("prestador_id", data.prestador_id);
+          p.clientesContratados = (pc || []).map((row) => row.clientes).filter(Boolean);
         }
+        setPerfil(p);
+        let saved = null;
+        try { saved = localStorage.getItem("da_salud_view"); } catch { /* ignore */ }
+        setViewRaw(saved || ((p.rol === "Auditor" || p.rol === "Coordinador" || p.rol === "Administrador") ? "casos" : "padron"));
       });
   }, [session]);
 
   if (!perfil || !view) return <div style={{ minHeight: "100vh", background: "var(--bg)" }} />;
 
   const VIEW_TITLES = {
-    padron: "Padrón", nuevo: "Nuevo caso", casos: "Casos", clientes: "Clientes", reglas: "Reglas del cliente",
+    padron: "Padrón", nuevo: "Nuevo caso", casos: "Casos", clientes: "Clientes", prestadores: "Prestadores", reglas: "Reglas del cliente",
     "censo-camas": "Censo de camas", facturacion: "Facturación y recuperos", traslados: "Traslados", bi: "Business Intelligence",
   };
 
@@ -1995,13 +2205,13 @@ function AppShell({ session }) {
           </div>
 
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-            {perfil.cliente_nombre && (
+            {(perfil.cliente_nombre || perfil.prestador_nombre) && (
               <div style={{
                 display: "flex", alignItems: "center", gap: 6, padding: "6px 12px", borderRadius: 20,
                 background: "var(--primary-tint)", border: "1px solid var(--primary)",
               }}>
                 <Building2 size={13} color="var(--primary-dark)" />
-                <span style={{ fontSize: 12, fontWeight: 600, color: "var(--primary-dark)" }}>{perfil.cliente_nombre}</span>
+                <span style={{ fontSize: 12, fontWeight: 600, color: "var(--primary-dark)" }}>{perfil.cliente_nombre || perfil.prestador_nombre}</span>
               </div>
             )}
             <div style={{ textAlign: "right" }}>
@@ -2019,6 +2229,7 @@ function AppShell({ session }) {
           {view === "nuevo" && <NewCaseView perfil={perfil} goTo={setView} onCreated={() => setRefreshKey((k) => k + 1)} />}
           {view === "casos" && <CasesView refreshKey={refreshKey} perfil={perfil} />}
           {view === "clientes" && <ClientesView />}
+          {view === "prestadores" && <PrestadoresView />}
           {view === "reglas" && <ReglasView perfil={perfil} />}
           {view === "censo-camas" && <ProximamenteView titulo="Censo de camas" descripcion="Vas a poder cargar el estado de cada cama (disponible, ocupada o bloqueada) y el afiliado internado, día por día. Es lo próximo que vamos a construir." />}
           {view === "facturacion" && <ProximamenteView titulo="Facturación y recuperos" descripcion="Control de prestaciones facturadas, validación contra lo autorizado y documentado, débitos y detección de oportunidades de recupero." />}
