@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import * as XLSX from "xlsx";
 import {
   ClipboardList, Plus, LogOut, Users, AlertTriangle,
   Clock, Search, Inbox, Paperclip, FileText, Building2, ShieldCheck,
@@ -1824,41 +1825,44 @@ async function exportarCatalogoCompleto() {
       tipo: CATALOG_KEY_TO_TIPO[it.catalogo_key] || it.catalogo_key,
       grupo: it.parent_id ? (byId[it.parent_id]?.nombre || "") : "",
       nombre: it.nombre,
-      ofrece: "",
-      codigo: "",
     });
   });
+  rows.sort((a, b) => a.tipo.localeCompare(b.tipo) || a.grupo.localeCompare(b.grupo) || a.nombre.localeCompare(b.nombre));
   return rows;
 }
 
-function descargarCsv(filename, headers, rows) {
-  const escape = (v) => {
-    const s = (v ?? "").toString();
-    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-  };
-  const lines = [headers.join(","), ...rows.map((r) => headers.map((h) => escape(r[h])).join(","))];
-  // El \uFEFF (BOM) es necesario para que Excel detecte que el archivo es UTF-8
-  // y no rompa las tildes/ñ al abrirlo.
-  const blob = new Blob(["\uFEFF" + lines.join("\n")], { type: "text/csv;charset=utf-8;" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url; a.download = filename;
-  document.body.appendChild(a); a.click(); document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+function descargarCatalogoXlsx(rows) {
+  const data = rows.map((r, i) => ({
+    "Tipo de auditoría": r.tipo,
+    "Categoría": r.grupo,
+    "Prestación": r.nombre,
+    "Ofrece (poné X)": "",
+    "Código propio": String(i + 1).padStart(5, "0"),
+    "_id": r.id,
+  }));
+  const ws = XLSX.utils.json_to_sheet(data);
+  ws["!cols"] = [
+    { wch: 22 }, { wch: 26 }, { wch: 32 }, { wch: 16 }, { wch: 14 }, { hidden: true, wch: 4 },
+  ];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "Prestaciones");
+  XLSX.writeFile(wb, "catalogo_prestaciones.xlsx");
 }
 
-function parsePrestacionesCompletadasCsv(text) {
-  const clean = text.replace(/^\uFEFF/, "");
-  const lines = clean.split(/\r?\n/).filter((l) => l.trim().length > 0);
-  if (lines.length < 2) return [];
-  const headers = splitCsvLine(lines[0]).map((h) => h.toLowerCase().trim());
-  return lines.slice(1).map((line) => {
-    const values = splitCsvLine(line);
-    const obj = {};
-    headers.forEach((h, i) => { obj[h] = values[i] || ""; });
-    return obj;
-  });
+function leerPrestacionesXlsx(arrayBuffer) {
+  const wb = XLSX.read(arrayBuffer, { type: "array" });
+  const ws = wb.Sheets[wb.SheetNames[0]];
+  const json = XLSX.utils.sheet_to_json(ws, { defval: "" });
+  return json.map((row) => ({
+    id: String(row["_id"] || "").trim(),
+    tipo: row["Tipo de auditoría"] || "",
+    grupo: row["Categoría"] || "",
+    nombre: row["Prestación"] || "",
+    ofrece: row["Ofrece (poné X)"] || "",
+    codigo: row["Código propio"] || "",
+  }));
 }
+
 
 
 async function buscarPrestacionesCatalogo(query) {
@@ -2053,7 +2057,7 @@ function PrestadoresView({ perfil }) {
   const descargarCatalogo = async () => {
     setDescargandoCatalogo(true);
     const rows = await exportarCatalogoCompleto();
-    descargarCsv("catalogo_prestaciones.csv", ["id", "tipo", "grupo", "nombre", "ofrece", "codigo"], rows);
+    descargarCatalogoXlsx(rows);
     setDescargandoCatalogo(false);
   };
 
@@ -2061,26 +2065,23 @@ function PrestadoresView({ perfil }) {
     if (!prestacionesBulkFile) return;
     setPrestacionesBulkLoading(true); setPrestacionesBulkStatus("");
     try {
-      const text = await prestacionesBulkFile.text();
-      const todas = parsePrestacionesCompletadasCsv(text).filter((f) => f.id && f.id.trim());
-      const tieneColumnaOfrece = todas.length > 0 && Object.prototype.hasOwnProperty.call(todas[0], "ofrece");
-      const marcadas = tieneColumnaOfrece
-        ? todas.filter((f) => /^(s|si|sí|x|1|yes)$/i.test((f.ofrece || "").trim()))
-        : todas;
+      const buffer = await prestacionesBulkFile.arrayBuffer();
+      const todas = leerPrestacionesXlsx(buffer).filter((f) => f.id);
+      const marcadas = todas.filter((f) => /^(s|si|sí|x|1|yes)$/i.test((f.ofrece || "").toString().trim()));
       if (todas.length === 0) {
-        setPrestacionesBulkStatus("El archivo no tiene filas con la columna 'id' completa.");
+        setPrestacionesBulkStatus("El archivo no tiene filas con datos (¿es el mismo que descargaste, sin borrar columnas?).");
         setPrestacionesBulkLoading(false);
         return;
       }
-      if (tieneColumnaOfrece && marcadas.length === 0) {
-        setPrestacionesBulkStatus("Ninguna fila tiene la columna 'ofrece' marcada (con X, SI o 1).");
+      if (marcadas.length === 0) {
+        setPrestacionesBulkStatus("Ninguna fila tiene la columna 'Ofrece (poné X)' marcada.");
         setPrestacionesBulkLoading(false);
         return;
       }
       setForm((f) => {
         const yaIds = new Set(f.prestaciones_ofrecidas.map((x) => x.id));
-        const nuevas = marcadas.filter((fl) => !yaIds.has(fl.id.trim())).map((fl) => ({
-          id: fl.id.trim(), nombre: fl.nombre || "", tipo: fl.tipo || "", grupo: fl.grupo || "", codigo: fl.codigo || "",
+        const nuevas = marcadas.filter((fl) => !yaIds.has(fl.id)).map((fl) => ({
+          id: fl.id, nombre: fl.nombre || "", tipo: fl.tipo || "", grupo: fl.grupo || "", codigo: String(fl.codigo || ""),
         }));
         return { ...f, prestaciones_ofrecidas: [...f.prestaciones_ofrecidas, ...nuevas] };
       });
@@ -2495,13 +2496,13 @@ function PrestadoresView({ perfil }) {
                 </button>
               </div>
               <p style={{ fontSize: 11, color: "var(--muted)", marginTop: 6 }}>
-                Descargá el catálogo completo desde la pantalla principal de Prestadores (botón "Descargar catálogo") y pasáselo al prestador. Le pedís que ponga una <strong>X</strong> en la columna "ofrece" en cada prestación que brinda, y complete su propio código en "codigo" — no hace falta que borre nada. Subís acá el archivo que te devuelva y se cargan solo las marcadas. Si le falta algo que no está en el catálogo, avisale que te lo diga y lo cargás manual con el buscador o el explorador.
+                Descargá el catálogo completo desde la pantalla principal de Prestadores (botón "Descargar catálogo") y pasáselo al prestador — es un Excel (.xlsx) normal, con columnas Tipo, Categoría, Prestación, "Ofrece" y "Código propio" (ya viene numerado 00001, 00002... para que solo tenga que pisarlo con su código real). Le pedís que ponga una <strong>X</strong> en "Ofrece" en cada prestación que brinda. Subís acá el archivo que te devuelva y se cargan solo las marcadas. Si le falta algo que no está en el catálogo, avisale que te lo diga y lo cargás manual con el buscador o el explorador.
               </p>
 
               {showPrestacionesBulk && (
                 <div style={{ ...cardStyle, padding: 14, marginTop: 10 }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-                    <input type="file" accept=".csv,text/csv" onChange={(e) => setPrestacionesBulkFile(e.target.files?.[0] || null)} style={{ fontSize: 12.5, fontFamily: "var(--font-body)" }} />
+                    <input type="file" accept=".xlsx" onChange={(e) => setPrestacionesBulkFile(e.target.files?.[0] || null)} style={{ fontSize: 12.5, fontFamily: "var(--font-body)" }} />
                     <button onClick={subirPrestacionesMasivo} disabled={!prestacionesBulkFile || prestacionesBulkLoading} style={btnPrimary(!!prestacionesBulkFile && !prestacionesBulkLoading)}>
                       {prestacionesBulkLoading ? "Subiendo..." : "Agregar del archivo"}
                     </button>
