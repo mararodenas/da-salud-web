@@ -1655,6 +1655,166 @@ const CATALOG_KEY_TO_TIPO = Object.fromEntries(
   Object.entries(CASE_TYPE_CONFIG).map(([tipo, cfg]) => [cfg.catalogKey, tipo])
 );
 
+async function fetchLeavesUnder(nodeId, nodeNombre) {
+  const { data: children } = await supabase.from("catalogo_items").select("id, nombre").eq("parent_id", nodeId).order("nombre");
+  if (!children || children.length === 0) return [];
+  let results = [];
+  for (const child of children) {
+    const { data: grand } = await supabase.from("catalogo_items").select("id").eq("parent_id", child.id).limit(1);
+    if (grand && grand.length > 0) {
+      const sub = await fetchLeavesUnder(child.id, child.nombre);
+      results.push(...sub);
+    } else {
+      results.push({ id: child.id, nombre: child.nombre, grupo: nodeNombre });
+    }
+  }
+  return results;
+}
+
+function CategoryExplorerModal({ onClose, onAdd }) {
+  const [tipo, setTipo] = useState(CASE_TYPES[0]);
+  const [levels, setLevels] = useState([]);
+  const [loadingLevels, setLoadingLevels] = useState(true);
+  const [current, setCurrent] = useState({ id: "", nombre: "" });
+
+  const [leaves, setLeaves] = useState(null);
+  const [loadingLeaves, setLoadingLeaves] = useState(false);
+  const [selected, setSelected] = useState(new Set());
+  const [leafQuery, setLeafQuery] = useState("");
+
+  const catalogoKey = CASE_TYPE_CONFIG[tipo].catalogKey;
+
+  const loadLevel = async (parentId) => {
+    let q = supabase.from("catalogo_items").select("id, nombre").eq("catalogo_key", catalogoKey).order("nombre");
+    q = parentId === null ? q.is("parent_id", null) : q.eq("parent_id", parentId);
+    const { data } = await q;
+    return data || [];
+  };
+
+  useEffect(() => {
+    setLoadingLevels(true);
+    setLeaves(null); setSelected(new Set()); setCurrent({ id: "", nombre: "" });
+    loadLevel(null).then((items) => {
+      setLevels([{ parentId: null, items, selected: "" }]);
+      setLoadingLevels(false);
+    });
+  }, [tipo]);
+
+  const selectAt = async (depth, id) => {
+    setLeaves(null); setSelected(new Set());
+    const trimmed = levels.slice(0, depth + 1);
+    trimmed[depth] = { ...trimmed[depth], selected: id };
+    if (!id) { setLevels(trimmed); setCurrent({ id: "", nombre: "" }); return; }
+    const item = trimmed[depth].items.find((i) => i.id === id);
+    setCurrent({ id, nombre: item?.nombre || "" });
+    const children = await loadLevel(id);
+    if (children.length > 0) {
+      setLevels([...trimmed, { parentId: id, items: children, selected: "" }]);
+    } else {
+      setLevels(trimmed);
+    }
+  };
+
+  const verTodas = async () => {
+    if (!current.id) return;
+    setLoadingLeaves(true);
+    const result = await fetchLeavesUnder(current.id, current.nombre);
+    setLeaves(result);
+    setLoadingLeaves(false);
+  };
+
+  const toggleSelected = (id) => setSelected((prev) => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
+
+  const leavesFiltradas = (leaves || []).filter((l) => l.nombre.toLowerCase().includes(leafQuery.trim().toLowerCase()));
+  const grupos = {};
+  leavesFiltradas.forEach((l) => { (grupos[l.grupo] ||= []).push(l); });
+
+  const agregarSeleccionadas = () => {
+    const items = (leaves || []).filter((l) => selected.has(l.id)).map((l) => ({ id: l.id, nombre: l.nombre, tipo }));
+    onAdd(items);
+    onClose();
+  };
+
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(15,37,71,0.5)", zIndex: 1100, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "40px 20px", overflowY: "auto" }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ ...cardStyle, padding: 20, maxWidth: 640, width: "100%" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
+          <div style={{ fontSize: 14, fontWeight: 600, color: "var(--ink)" }}>Elegir por categoría</div>
+          <button onClick={onClose} style={{ border: "none", background: "transparent", cursor: "pointer", color: "var(--muted)" }}>
+            <X size={16} />
+          </button>
+        </div>
+
+        <label style={labelStyle}>Tipo de auditoría</label>
+        <select value={tipo} onChange={(e) => setTipo(e.target.value)} style={{ ...inputStyle, marginBottom: 12 }}>
+          {CASE_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+        </select>
+
+        {loadingLevels ? (
+          <div style={{ fontSize: 13, color: "var(--muted)" }}>Cargando...</div>
+        ) : (
+          <div style={{ display: "flex", gap: 8, overflowX: "auto", paddingBottom: 4, marginBottom: 10 }}>
+            {levels.map((lvl, depth) => (
+              <select key={depth} value={lvl.selected} onChange={(e) => selectAt(depth, e.target.value)} style={{ ...inputStyle, flex: "0 0 200px", width: 200 }}>
+                <option value="">Seleccionar...</option>
+                {lvl.items.map((it) => <option key={it.id} value={it.id}>{it.nombre}</option>)}
+              </select>
+            ))}
+          </div>
+        )}
+
+        {current.id && (
+          <button onClick={verTodas} disabled={loadingLeaves} style={{ ...btnPrimary(true), marginBottom: 14 }}>
+            {loadingLeaves ? "Cargando..." : `Ver todas las opciones de "${current.nombre}"`}
+          </button>
+        )}
+
+        {leaves !== null && (
+          leaves.length === 0 ? (
+            <div style={{ fontSize: 13, color: "var(--muted)" }}>Esta categoría no tiene prestaciones puntuales cargadas debajo.</div>
+          ) : (
+            <div style={{ borderTop: "1px solid var(--border)", paddingTop: 14 }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8, flexWrap: "wrap", gap: 8 }}>
+                <span style={{ fontSize: 12.5, color: "var(--muted)" }}>{leaves.length} opciones{selected.size > 0 ? ` · ${selected.size} elegidas` : ""}</span>
+                <div style={{ display: "flex", gap: 10 }}>
+                  <button onClick={() => setSelected(new Set(leavesFiltradas.map((l) => l.id)))} style={{ border: "none", background: "transparent", cursor: "pointer", fontSize: 12, fontWeight: 500, color: "var(--primary-dark)", fontFamily: "var(--font-body)", padding: 0 }}>Seleccionar todas</button>
+                  <button onClick={() => setSelected(new Set())} style={{ border: "none", background: "transparent", cursor: "pointer", fontSize: 12, fontWeight: 500, color: "var(--muted)", fontFamily: "var(--font-body)", padding: 0 }}>Ninguna</button>
+                </div>
+              </div>
+              {leaves.length > 8 && (
+                <input value={leafQuery} onChange={(e) => setLeafQuery(e.target.value)} placeholder="Filtrar por nombre..." style={{ ...inputStyle, marginBottom: 10 }} />
+              )}
+              <div style={{ display: "flex", flexDirection: "column", gap: 10, maxHeight: 300, overflowY: "auto" }}>
+                {Object.entries(grupos).map(([grupo, items]) => (
+                  <div key={grupo}>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: "var(--muted)", marginBottom: 4 }}>{grupo}</div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 6, paddingLeft: 10 }}>
+                      {items.map((l) => (
+                        <label key={l.id} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "var(--ink)", cursor: "pointer" }}>
+                          <input type="checkbox" checked={selected.has(l.id)} onChange={() => toggleSelected(l.id)} />
+                          {l.nombre}
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <button onClick={agregarSeleccionadas} disabled={selected.size === 0} style={{ ...btnPrimary(selected.size > 0), marginTop: 14 }}>
+                Agregar {selected.size > 0 ? `${selected.size} ` : ""}prestaciones
+              </button>
+            </div>
+          )
+        )}
+      </div>
+    </div>
+  );
+}
+
+
 async function buscarPrestacionesCatalogo(query) {
   if (!query.trim()) return [];
   const { data } = await supabase.from("catalogo_items").select("id, nombre, catalogo_key")
@@ -1712,6 +1872,7 @@ function PrestadoresView({ perfil }) {
   const [prestacionQuery, setPrestacionQuery] = useState("");
   const [prestacionResultados, setPrestacionResultados] = useState([]);
   const [prestacionBuscando, setPrestacionBuscando] = useState(false);
+  const [showExplorer, setShowExplorer] = useState(false);
 
   const [showBulk, setShowBulk] = useState(false);
   const [bulkFile, setBulkFile] = useState(null);
@@ -2132,12 +2293,17 @@ function PrestadoresView({ perfil }) {
                 </div>
               )}
 
-              <div style={{ position: "relative" }}>
-                <Search size={14} color="var(--muted)" style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)" }} />
-                <input
-                  value={prestacionQuery} onChange={(e) => setPrestacionQuery(e.target.value)}
-                  placeholder="Buscar prestación por nombre (ej. Pediatría, Ecografía)..." style={{ ...inputStyle, paddingLeft: 30 }}
-                />
+              <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
+                <div style={{ position: "relative", flex: 1 }}>
+                  <Search size={14} color="var(--muted)" style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)" }} />
+                  <input
+                    value={prestacionQuery} onChange={(e) => setPrestacionQuery(e.target.value)}
+                    placeholder="Buscar prestación por nombre (ej. Pediatría, Ecografía)..." style={{ ...inputStyle, paddingLeft: 30 }}
+                  />
+                </div>
+                <button onClick={() => setShowExplorer(true)} style={{ ...btnPrimary(true), background: "var(--surface)", color: "var(--primary-dark)", border: "1px solid var(--primary)", whiteSpace: "nowrap" }}>
+                  Elegir por categoría
+                </button>
               </div>
               {prestacionQuery.trim() && (
                 <div style={{ marginTop: 6, border: "1px solid var(--border)", borderRadius: 8, maxHeight: 220, overflowY: "auto" }}>
@@ -2160,6 +2326,16 @@ function PrestadoresView({ perfil }) {
                     </button>
                   ))}
                 </div>
+              )}
+
+              {showExplorer && (
+                <CategoryExplorerModal
+                  onClose={() => setShowExplorer(false)}
+                  onAdd={(items) => setForm((f) => {
+                    const yaIds = new Set(f.prestaciones_ofrecidas.map((x) => x.id));
+                    return { ...f, prestaciones_ofrecidas: [...f.prestaciones_ofrecidas, ...items.filter((it) => !yaIds.has(it.id))] };
+                  })}
+                />
               )}
             </div>
 
