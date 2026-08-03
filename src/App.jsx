@@ -1759,7 +1759,7 @@ function CategoryExplorerModal({ onClose, onAdd }) {
     const items = [...selected].map((id) => {
       const item = tree.byId[id];
       const parent = item?.parent_id ? tree.byId[item.parent_id] : null;
-      return { id, nombre: item?.nombre || "", tipo, grupo: parent?.nombre || "" };
+      return { id, nombre: item?.nombre || "", tipo, grupo: parent?.nombre || "", codigo: "" };
     });
     onAdd(items);
     onClose();
@@ -1807,6 +1807,55 @@ function CategoryExplorerModal({ onClose, onAdd }) {
     </div>
   );
 }
+
+async function exportarCatalogoCompleto() {
+  const { data } = await supabase.from("catalogo_items").select("id, nombre, parent_id, catalogo_key");
+  if (!data) return [];
+  const byId = {};
+  data.forEach((it) => { byId[it.id] = it; });
+  const byParent = {};
+  data.forEach((it) => { const k = it.parent_id || "root"; (byParent[k] ||= []).push(it); });
+  const rows = [];
+  data.forEach((it) => {
+    const children = byParent[it.id];
+    if (children && children.length > 0) return; // no es hoja
+    rows.push({
+      id: it.id,
+      tipo: CATALOG_KEY_TO_TIPO[it.catalogo_key] || it.catalogo_key,
+      grupo: it.parent_id ? (byId[it.parent_id]?.nombre || "") : "",
+      nombre: it.nombre,
+      codigo: "",
+    });
+  });
+  return rows;
+}
+
+function descargarCsv(filename, headers, rows) {
+  const escape = (v) => {
+    const s = (v ?? "").toString();
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const lines = [headers.join(","), ...rows.map((r) => headers.map((h) => escape(r[h])).join(","))];
+  const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+function parsePrestacionesCompletadasCsv(text) {
+  const lines = text.split(/\r?\n/).filter((l) => l.trim().length > 0);
+  if (lines.length < 2) return [];
+  const headers = splitCsvLine(lines[0]).map((h) => h.toLowerCase().trim());
+  return lines.slice(1).map((line) => {
+    const values = splitCsvLine(line);
+    const obj = {};
+    headers.forEach((h, i) => { obj[h] = values[i] || ""; });
+    return obj;
+  });
+}
+
 
 async function buscarPrestacionesCatalogo(query) {
   if (!query.trim()) return [];
@@ -1878,6 +1927,11 @@ function PrestadoresView({ perfil }) {
   const [showExplorer, setShowExplorer] = useState(false);
   const [ofrecidasQuery, setOfrecidasQuery] = useState("");
   const [ofrecidasExpanded, setOfrecidasExpanded] = useState(new Set());
+  const [showPrestacionesBulk, setShowPrestacionesBulk] = useState(false);
+  const [prestacionesBulkFile, setPrestacionesBulkFile] = useState(null);
+  const [prestacionesBulkStatus, setPrestacionesBulkStatus] = useState("");
+  const [prestacionesBulkLoading, setPrestacionesBulkLoading] = useState(false);
+  const [descargandoCatalogo, setDescargandoCatalogo] = useState(false);
 
   const [showBulk, setShowBulk] = useState(false);
   const [bulkFile, setBulkFile] = useState(null);
@@ -1981,13 +2035,49 @@ function PrestadoresView({ perfil }) {
   const agregarPrestacionOfrecida = (pr) => {
     setForm((f) => {
       if (f.prestaciones_ofrecidas.some((x) => x.id === pr.id)) return f;
-      return { ...f, prestaciones_ofrecidas: [...f.prestaciones_ofrecidas, pr] };
+      return { ...f, prestaciones_ofrecidas: [...f.prestaciones_ofrecidas, { ...pr, codigo: "" }] };
     });
     setPrestacionQuery(""); setPrestacionResultados([]);
   };
   const quitarPrestacionOfrecida = (id) => setForm((f) => ({
     ...f, prestaciones_ofrecidas: f.prestaciones_ofrecidas.filter((x) => x.id !== id),
   }));
+  const actualizarCodigoPrestacion = (id, codigo) => setForm((f) => ({
+    ...f, prestaciones_ofrecidas: f.prestaciones_ofrecidas.map((x) => x.id === id ? { ...x, codigo } : x),
+  }));
+
+  const descargarCatalogo = async () => {
+    setDescargandoCatalogo(true);
+    const rows = await exportarCatalogoCompleto();
+    descargarCsv("catalogo_prestaciones.csv", ["id", "tipo", "grupo", "nombre", "codigo"], rows);
+    setDescargandoCatalogo(false);
+  };
+
+  const subirPrestacionesMasivo = async () => {
+    if (!prestacionesBulkFile) return;
+    setPrestacionesBulkLoading(true); setPrestacionesBulkStatus("");
+    try {
+      const text = await prestacionesBulkFile.text();
+      const filas = parsePrestacionesCompletadasCsv(text).filter((f) => f.id && f.id.trim());
+      if (filas.length === 0) {
+        setPrestacionesBulkStatus("El archivo no tiene filas con la columna 'id' completa.");
+        setPrestacionesBulkLoading(false);
+        return;
+      }
+      setForm((f) => {
+        const yaIds = new Set(f.prestaciones_ofrecidas.map((x) => x.id));
+        const nuevas = filas.filter((fl) => !yaIds.has(fl.id.trim())).map((fl) => ({
+          id: fl.id.trim(), nombre: fl.nombre || "", tipo: fl.tipo || "", grupo: fl.grupo || "", codigo: fl.codigo || "",
+        }));
+        return { ...f, prestaciones_ofrecidas: [...f.prestaciones_ofrecidas, ...nuevas] };
+      });
+      setPrestacionesBulkStatus(`✓ ${filas.length} prestaciones agregadas.`);
+      setPrestacionesBulkFile(null);
+    } catch {
+      setPrestacionesBulkStatus("No se pudo leer el archivo.");
+    }
+    setPrestacionesBulkLoading(false);
+  };
 
   const guardarPrestador = async () => {
     if (!form.nombre.trim()) return;
@@ -2325,9 +2415,14 @@ function PrestadoresView({ perfil }) {
                               </button>
                             </div>
                             {expandido && items.map((pr) => (
-                              <div key={pr.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "6px 10px 6px 26px", borderTop: "1px solid var(--border)" }}>
-                                <span style={{ fontSize: 13, color: "var(--ink)" }}>{pr.nombre}</span>
-                                <button onClick={() => quitarPrestacionOfrecida(pr.id)} style={{ border: "none", background: "transparent", cursor: "pointer", padding: 0, display: "flex", color: "var(--muted)" }}>
+                              <div key={pr.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 10px 6px 26px", borderTop: "1px solid var(--border)" }}>
+                                <span style={{ fontSize: 13, color: "var(--ink)", flex: 1 }}>{pr.nombre}</span>
+                                <input
+                                  value={pr.codigo || ""} onChange={(e) => actualizarCodigoPrestacion(pr.id, e.target.value)}
+                                  placeholder="Código del prestador"
+                                  style={{ ...inputStyle, padding: "4px 8px", fontSize: 12, width: 130 }}
+                                />
+                                <button onClick={() => quitarPrestacionOfrecida(pr.id)} style={{ border: "none", background: "transparent", cursor: "pointer", padding: 0, display: "flex", color: "var(--muted)", flexShrink: 0 }}>
                                   <X size={13} />
                                 </button>
                               </div>
@@ -2375,6 +2470,34 @@ function PrestadoresView({ perfil }) {
                       <span style={{ color: "var(--muted)", fontSize: 11.5 }}>{pr.tipo}</span> · {pr.nombre}
                     </button>
                   ))}
+                </div>
+              )}
+
+              <div style={{ display: "flex", gap: 14, marginTop: 12, paddingTop: 12, borderTop: "1px solid var(--border)", flexWrap: "wrap" }}>
+                <button onClick={descargarCatalogo} disabled={descargandoCatalogo} style={{ border: "none", background: "transparent", cursor: "pointer", fontSize: 12, fontWeight: 500, color: "var(--primary-dark)", fontFamily: "var(--font-body)", padding: 0, display: "flex", alignItems: "center", gap: 5 }}>
+                  <Upload size={13} /> {descargandoCatalogo ? "Generando..." : "Descargar catálogo completo (CSV)"}
+                </button>
+                <button onClick={() => setShowPrestacionesBulk((v) => !v)} style={{ border: "none", background: "transparent", cursor: "pointer", fontSize: 12, fontWeight: 500, color: "var(--primary-dark)", fontFamily: "var(--font-body)", padding: 0, display: "flex", alignItems: "center", gap: 5 }}>
+                  <Paperclip size={13} /> Subir el archivo completado
+                </button>
+              </div>
+              <p style={{ fontSize: 11, color: "var(--muted)", marginTop: 6 }}>
+                Bajás el catálogo completo, se lo pasás al prestador para que deje solo las filas que ofrece y complete su propio código en la columna "codigo", y subís de vuelta el archivo acá. Si le falta algo, avisale que te lo diga y lo cargás manual con el buscador o el explorador.
+              </p>
+
+              {showPrestacionesBulk && (
+                <div style={{ ...cardStyle, padding: 14, marginTop: 10 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                    <input type="file" accept=".csv,text/csv" onChange={(e) => setPrestacionesBulkFile(e.target.files?.[0] || null)} style={{ fontSize: 12.5, fontFamily: "var(--font-body)" }} />
+                    <button onClick={subirPrestacionesMasivo} disabled={!prestacionesBulkFile || prestacionesBulkLoading} style={btnPrimary(!!prestacionesBulkFile && !prestacionesBulkLoading)}>
+                      {prestacionesBulkLoading ? "Subiendo..." : "Agregar del archivo"}
+                    </button>
+                  </div>
+                  {prestacionesBulkStatus && (
+                    <div style={{ marginTop: 8, fontSize: 12, color: prestacionesBulkStatus.startsWith("El archivo") || prestacionesBulkStatus.startsWith("No se") ? "#A13333" : "#27500A" }}>
+                      {prestacionesBulkStatus}
+                    </div>
+                  )}
                 </div>
               )}
 
