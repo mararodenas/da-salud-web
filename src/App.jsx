@@ -2263,31 +2263,69 @@ function PrestadoresView({ perfil }) {
               </div>
             )}
 
-            {(editingVinculo.prestaciones_ofrecidas || []).length > 0 && (
-              <div style={{ marginBottom: 14 }}>
-                <label style={labelStyle}>Prestaciones contratadas</label>
-                <p style={{ fontSize: 11.5, color: "var(--muted)", margin: "2px 0 8px" }}>
-                  Tildá cuáles de las prestaciones que ofrece este prestador le contrataste.
-                  {vinculoForm.prestaciones_contratadas.length > 0 && ` (${vinculoForm.prestaciones_contratadas.length} seleccionadas)`}
-                </p>
-                {editingVinculo.prestaciones_ofrecidas.length > 6 && (
-                  <input
-                    value={vinculoPrestacionQuery} onChange={(e) => setVinculoPrestacionQuery(e.target.value)}
-                    placeholder="Filtrar por nombre..." style={{ ...inputStyle, marginBottom: 8 }}
-                  />
-                )}
-                <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 200, overflowY: "auto" }}>
-                  {editingVinculo.prestaciones_ofrecidas
-                    .filter((pr) => pr.nombre.toLowerCase().includes(vinculoPrestacionQuery.trim().toLowerCase()))
-                    .map((pr) => (
-                      <label key={pr.id} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "var(--ink)", cursor: "pointer" }}>
-                        <input type="checkbox" checked={vinculoForm.prestaciones_contratadas.some((x) => x.id === pr.id)} onChange={() => toggleprestacionContratada(pr)} />
-                        {pr.tipo}: {pr.nombre}
-                      </label>
-                    ))}
+            {(editingVinculo.prestaciones_ofrecidas || []).length > 0 && (() => {
+              const q = vinculoPrestacionQuery.trim().toLowerCase();
+              const visibles = editingVinculo.prestaciones_ofrecidas.filter((pr) => pr.nombre.toLowerCase().includes(q));
+              const contratadasIds = new Set(vinculoForm.prestaciones_contratadas.map((x) => x.id));
+              const todasVisiblesContratadas = visibles.length > 0 && visibles.every((pr) => contratadasIds.has(pr.id));
+              const seleccionarVisibles = () => setVinculoForm((f) => {
+                const yaIds = new Set(f.prestaciones_contratadas.map((x) => x.id));
+                return { ...f, prestaciones_contratadas: [...f.prestaciones_contratadas, ...visibles.filter((pr) => !yaIds.has(pr.id))] };
+              });
+              const quitarVisibles = () => setVinculoForm((f) => {
+                const visIds = new Set(visibles.map((x) => x.id));
+                return { ...f, prestaciones_contratadas: f.prestaciones_contratadas.filter((x) => !visIds.has(x.id)) };
+              });
+              const grupos = {};
+              visibles.forEach((pr) => { (grupos[pr.tipo] ||= []).push(pr); });
+              const toggleGrupo = (items) => setVinculoForm((f) => {
+                const itemIds = new Set(items.map((x) => x.id));
+                const todosEnGrupo = items.every((pr) => contratadasIds.has(pr.id));
+                return todosEnGrupo
+                  ? { ...f, prestaciones_contratadas: f.prestaciones_contratadas.filter((x) => !itemIds.has(x.id)) }
+                  : { ...f, prestaciones_contratadas: [...f.prestaciones_contratadas, ...items.filter((pr) => !contratadasIds.has(pr.id))] };
+              });
+
+              return (
+                <div style={{ marginBottom: 14 }}>
+                  <label style={labelStyle}>Prestaciones contratadas</label>
+                  <p style={{ fontSize: 11.5, color: "var(--muted)", margin: "2px 0 8px" }}>
+                    Tildá cuáles de las prestaciones que ofrece este prestador le contrataste.
+                    {vinculoForm.prestaciones_contratadas.length > 0 && ` (${vinculoForm.prestaciones_contratadas.length} de ${editingVinculo.prestaciones_ofrecidas.length} seleccionadas)`}
+                  </p>
+                  {editingVinculo.prestaciones_ofrecidas.length > 6 && (
+                    <input
+                      value={vinculoPrestacionQuery} onChange={(e) => setVinculoPrestacionQuery(e.target.value)}
+                      placeholder="Filtrar por nombre..." style={{ ...inputStyle, marginBottom: 8 }}
+                    />
+                  )}
+                  <button onClick={todasVisiblesContratadas ? quitarVisibles : seleccionarVisibles} style={{ border: "none", background: "transparent", cursor: "pointer", padding: 0, marginBottom: 8, fontSize: 12, fontWeight: 500, color: "var(--primary-dark)", fontFamily: "var(--font-body)" }}>
+                    {todasVisiblesContratadas ? `Quitar las ${visibles.length}` : (q ? `Seleccionar las ${visibles.length} de la búsqueda` : `Seleccionar las ${visibles.length}`)}
+                  </button>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 10, maxHeight: 240, overflowY: "auto" }}>
+                    {Object.entries(grupos).map(([tipo, items]) => {
+                      const todosDelGrupo = items.every((pr) => contratadasIds.has(pr.id));
+                      return (
+                        <div key={tipo}>
+                          <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, fontWeight: 600, color: "var(--muted)", cursor: "pointer", marginBottom: 4 }}>
+                            <input type="checkbox" checked={todosDelGrupo} onChange={() => toggleGrupo(items)} />
+                            {tipo} ({items.length})
+                          </label>
+                          <div style={{ display: "flex", flexDirection: "column", gap: 6, paddingLeft: 22 }}>
+                            {items.map((pr) => (
+                              <label key={pr.id} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "var(--ink)", cursor: "pointer" }}>
+                                <input type="checkbox" checked={contratadasIds.has(pr.id)} onChange={() => toggleprestacionContratada(pr)} />
+                                {pr.nombre}
+                              </label>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
-              </div>
-            )}
+              );
+            })()}
 
             {vinculoError && <div style={{ marginBottom: 10, fontSize: 12, color: "#A13333", background: "#FBE7E7", padding: "8px 10px", borderRadius: 8 }}>{vinculoError}</div>}
             <button onClick={guardarVinculo} disabled={vinculoSaving} style={{ ...btnPrimary(true), marginBottom: 14 }}>
