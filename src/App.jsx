@@ -2261,9 +2261,12 @@ function PrestadoresView({ perfil }) {
 
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap", marginBottom: 16 }}>
         {isAdmin ? (
-          <div style={{ display: "flex", gap: 8 }}>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             <button onClick={() => { setShowBulk((v) => !v); setShowForm(false); }} style={{ ...btnPrimary(true), background: "var(--surface)", color: "var(--primary-dark)", border: "1px solid var(--primary)" }}>
               <Upload size={15} /> Carga masiva
+            </button>
+            <button onClick={descargarCatalogo} disabled={descargandoCatalogo} style={{ ...btnPrimary(true), background: "var(--surface)", color: "var(--primary-dark)", border: "1px solid var(--primary)" }}>
+              <FileText size={15} /> {descargandoCatalogo ? "Generando..." : "Descargar catálogo"}
             </button>
             <button onClick={openNew} style={btnPrimary(true)}>
               <Plus size={15} /> Nuevo prestador
@@ -2486,16 +2489,13 @@ function PrestadoresView({ perfil }) {
                 </div>
               )}
 
-              <div style={{ display: "flex", gap: 14, marginTop: 12, paddingTop: 12, borderTop: "1px solid var(--border)", flexWrap: "wrap" }}>
-                <button onClick={descargarCatalogo} disabled={descargandoCatalogo} style={{ border: "none", background: "transparent", cursor: "pointer", fontSize: 12, fontWeight: 500, color: "var(--primary-dark)", fontFamily: "var(--font-body)", padding: 0, display: "flex", alignItems: "center", gap: 5 }}>
-                  <Upload size={13} /> {descargandoCatalogo ? "Generando..." : "Descargar catálogo completo (CSV)"}
-                </button>
+              <div style={{ marginTop: 12, paddingTop: 12, borderTop: "1px solid var(--border)" }}>
                 <button onClick={() => setShowPrestacionesBulk((v) => !v)} style={{ border: "none", background: "transparent", cursor: "pointer", fontSize: 12, fontWeight: 500, color: "var(--primary-dark)", fontFamily: "var(--font-body)", padding: 0, display: "flex", alignItems: "center", gap: 5 }}>
-                  <Paperclip size={13} /> Subir el archivo completado
+                  <Paperclip size={13} /> Subir el archivo de prestaciones completado
                 </button>
               </div>
               <p style={{ fontSize: 11, color: "var(--muted)", marginTop: 6 }}>
-                Bajás el catálogo completo y se lo pasás al prestador. Le pedís que ponga una <strong>X</strong> en la columna "ofrece" en cada prestación que brinda, y complete su propio código en "codigo" — no hace falta que borre nada. Subís de vuelta el archivo acá y se cargan solo las marcadas. Si le falta algo que no está en el catálogo, avisale que te lo diga y lo cargás manual con el buscador o el explorador.
+                Descargá el catálogo completo desde la pantalla principal de Prestadores (botón "Descargar catálogo") y pasáselo al prestador. Le pedís que ponga una <strong>X</strong> en la columna "ofrece" en cada prestación que brinda, y complete su propio código en "codigo" — no hace falta que borre nada. Subís acá el archivo que te devuelva y se cargan solo las marcadas. Si le falta algo que no está en el catálogo, avisale que te lo diga y lo cargás manual con el buscador o el explorador.
               </p>
 
               {showPrestacionesBulk && (
