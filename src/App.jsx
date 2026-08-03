@@ -1832,27 +1832,39 @@ async function exportarCatalogoCompleto() {
 }
 
 function descargarCatalogoXlsx(rows) {
-  const data = rows.map((r, i) => ({
-    "Tipo de auditoría": r.tipo,
-    "Categoría": r.grupo,
-    "Prestación": r.nombre,
-    "Ofrece (poné X)": "",
-    "Código propio": String(i + 1).padStart(5, "0"),
-    "_id": r.id,
-  }));
-  const ws = XLSX.utils.json_to_sheet(data);
+  const headers = ["Tipo de auditoría", "Categoría", "Prestación", "Ofrece (poné X)", "Código propio", "_id"];
+  const aviso = "Si posee un nomenclador propio, cambie el número de \"Código propio\" por el suyo. No modifique el nombre de la prestación.";
+
+  const aoa = [
+    [aviso, "", "", "", "", ""],
+    headers,
+    ...rows.map((r, i) => [r.tipo, r.grupo, r.nombre, "", String(i + 1).padStart(5, "0"), r.id]),
+  ];
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
   ws["!cols"] = [
     { wch: 22 }, { wch: 26 }, { wch: 32 }, { wch: 16 }, { wch: 14 }, { hidden: true, wch: 4 },
   ];
+  ws["!merges"] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 4 } }];
+
+  const avisoStyle = { font: { italic: true, bold: true, color: { rgb: "8A5A00" } }, fill: { fgColor: { rgb: "FFF3CD" } } };
+  const headerStyle = { font: { bold: true, color: { rgb: "FFFFFF" } }, fill: { fgColor: { rgb: "0F2547" } } };
+  headers.forEach((_, c) => {
+    const avisoCell = XLSX.utils.encode_cell({ r: 0, c });
+    if (ws[avisoCell]) ws[avisoCell].s = avisoStyle;
+    const headerCell = XLSX.utils.encode_cell({ r: 1, c });
+    if (ws[headerCell]) ws[headerCell].s = headerStyle;
+  });
+
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, "Prestaciones");
-  XLSX.writeFile(wb, "catalogo_prestaciones.xlsx");
+  XLSX.writeFile(wb, "catalogo_prestaciones.xlsx", { cellStyles: true });
 }
 
 function leerPrestacionesXlsx(arrayBuffer) {
   const wb = XLSX.read(arrayBuffer, { type: "array" });
   const ws = wb.Sheets[wb.SheetNames[0]];
-  const json = XLSX.utils.sheet_to_json(ws, { defval: "" });
+  // fila 0 = aviso, fila 1 = encabezados reales -> arrancamos desde ahí
+  const json = XLSX.utils.sheet_to_json(ws, { defval: "", range: 1 });
   return json.map((row) => ({
     id: String(row["_id"] || "").trim(),
     tipo: row["Tipo de auditoría"] || "",
