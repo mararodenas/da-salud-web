@@ -1655,86 +1655,112 @@ const CATALOG_KEY_TO_TIPO = Object.fromEntries(
   Object.entries(CASE_TYPE_CONFIG).map(([tipo, cfg]) => [cfg.catalogKey, tipo])
 );
 
-async function fetchLeavesUnder(nodeId, nodeNombre) {
-  const { data: children } = await supabase.from("catalogo_items").select("id, nombre").eq("parent_id", nodeId).order("nombre");
-  if (!children || children.length === 0) return [];
-  let results = [];
-  for (const child of children) {
-    const { data: grand } = await supabase.from("catalogo_items").select("id").eq("parent_id", child.id).limit(1);
-    if (grand && grand.length > 0) {
-      const sub = await fetchLeavesUnder(child.id, child.nombre);
-      results.push(...sub);
-    } else {
-      results.push({ id: child.id, nombre: child.nombre, grupo: nodeNombre });
-    }
+function buildCatalogTree(items) {
+  const byParent = {};
+  const byId = {};
+  items.forEach((it) => {
+    byId[it.id] = it;
+    const key = it.parent_id || "root";
+    (byParent[key] ||= []).push(it);
+  });
+  Object.values(byParent).forEach((arr) => arr.sort((a, b) => a.nombre.localeCompare(b.nombre)));
+  return { byParent, byId };
+}
+
+function leafDescendants(id, byParent) {
+  const children = byParent[id];
+  if (!children || children.length === 0) return [id];
+  return children.flatMap((c) => leafDescendants(c.id, byParent));
+}
+
+function CatalogTreeNode({ item, depth, byParent, selected, toggleLeaf, toggleBranch, collapsed, toggleCollapse }) {
+  const children = byParent[item.id];
+  const isLeaf = !children || children.length === 0;
+
+  if (isLeaf) {
+    return (
+      <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "var(--ink)", cursor: "pointer", padding: "3px 0", paddingLeft: depth * 18 }}>
+        <input type="checkbox" checked={selected.has(item.id)} onChange={() => toggleLeaf(item.id)} />
+        {item.nombre}
+      </label>
+    );
   }
-  return results;
+
+  const leafIds = leafDescendants(item.id, byParent);
+  const allSelected = leafIds.every((id) => selected.has(id));
+  const someSelected = !allSelected && leafIds.some((id) => selected.has(id));
+  const isCollapsed = collapsed.has(item.id);
+
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "center", gap: 4, paddingLeft: depth * 18 }}>
+        <button onClick={() => toggleCollapse(item.id)} style={{ border: "none", background: "transparent", cursor: "pointer", color: "var(--muted)", display: "flex", padding: 2 }}>
+          {isCollapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
+        </button>
+        <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 600, color: "var(--ink)", cursor: "pointer" }}>
+          <input
+            type="checkbox" checked={allSelected}
+            ref={(el) => { if (el) el.indeterminate = someSelected; }}
+            onChange={() => toggleBranch(leafIds, !allSelected)}
+          />
+          {item.nombre} <span style={{ fontWeight: 400, color: "var(--muted)" }}>({leafIds.length})</span>
+        </label>
+      </div>
+      {!isCollapsed && children.map((c) => (
+        <CatalogTreeNode
+          key={c.id} item={c} depth={depth + 1} byParent={byParent}
+          selected={selected} toggleLeaf={toggleLeaf} toggleBranch={toggleBranch}
+          collapsed={collapsed} toggleCollapse={toggleCollapse}
+        />
+      ))}
+    </div>
+  );
 }
 
 function CategoryExplorerModal({ onClose, onAdd }) {
   const [tipo, setTipo] = useState(CASE_TYPES[0]);
-  const [levels, setLevels] = useState([]);
-  const [loadingLevels, setLoadingLevels] = useState(true);
-  const [current, setCurrent] = useState({ id: "", nombre: "" });
-
-  const [leaves, setLeaves] = useState(null);
-  const [loadingLeaves, setLoadingLeaves] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [tree, setTree] = useState({ byParent: {}, byId: {} });
   const [selected, setSelected] = useState(new Set());
-  const [leafQuery, setLeafQuery] = useState("");
+  const [collapsed, setCollapsed] = useState(new Set());
+  const [query, setQuery] = useState("");
 
   const catalogoKey = CASE_TYPE_CONFIG[tipo].catalogKey;
 
-  const loadLevel = async (parentId) => {
-    let q = supabase.from("catalogo_items").select("id, nombre").eq("catalogo_key", catalogoKey).order("nombre");
-    q = parentId === null ? q.is("parent_id", null) : q.eq("parent_id", parentId);
-    const { data } = await q;
-    return data || [];
-  };
-
   useEffect(() => {
-    setLoadingLevels(true);
-    setLeaves(null); setSelected(new Set()); setCurrent({ id: "", nombre: "" });
-    loadLevel(null).then((items) => {
-      setLevels([{ parentId: null, items, selected: "" }]);
-      setLoadingLevels(false);
-    });
+    setLoading(true); setSelected(new Set()); setCollapsed(new Set());
+    supabase.from("catalogo_items").select("id, nombre, parent_id").eq("catalogo_key", catalogoKey)
+      .then(({ data }) => { setTree(buildCatalogTree(data || [])); setLoading(false); });
   }, [tipo]);
 
-  const selectAt = async (depth, id) => {
-    setLeaves(null); setSelected(new Set());
-    const trimmed = levels.slice(0, depth + 1);
-    trimmed[depth] = { ...trimmed[depth], selected: id };
-    if (!id) { setLevels(trimmed); setCurrent({ id: "", nombre: "" }); return; }
-    const item = trimmed[depth].items.find((i) => i.id === id);
-    setCurrent({ id, nombre: item?.nombre || "" });
-    const children = await loadLevel(id);
-    if (children.length > 0) {
-      setLevels([...trimmed, { parentId: id, items: children, selected: "" }]);
-    } else {
-      setLevels(trimmed);
-    }
-  };
+  const roots = tree.byParent["root"] || [];
 
-  const verTodas = async () => {
-    if (!current.id) return;
-    setLoadingLeaves(true);
-    const result = await fetchLeavesUnder(current.id, current.nombre);
-    setLeaves(result);
-    setLoadingLeaves(false);
-  };
-
-  const toggleSelected = (id) => setSelected((prev) => {
+  const toggleLeaf = (id) => setSelected((prev) => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
+  const toggleBranch = (leafIds, makeSelected) => setSelected((prev) => {
+    const next = new Set(prev);
+    leafIds.forEach((id) => { if (makeSelected) next.add(id); else next.delete(id); });
+    return next;
+  });
+  const toggleCollapse = (id) => setCollapsed((prev) => {
     const next = new Set(prev);
     if (next.has(id)) next.delete(id); else next.add(id);
     return next;
   });
 
-  const leavesFiltradas = (leaves || []).filter((l) => l.nombre.toLowerCase().includes(leafQuery.trim().toLowerCase()));
-  const grupos = {};
-  leavesFiltradas.forEach((l) => { (grupos[l.grupo] ||= []).push(l); });
+  // si hay búsqueda, filtramos a las hojas cuyo nombre matchea y expandimos sus padres
+  const q = query.trim().toLowerCase();
+  const visibleRoots = !q ? roots : roots.filter((r) => leafDescendants(r.id, tree.byParent).some((id) => tree.byId[id].nombre.toLowerCase().includes(q)));
 
-  const agregarSeleccionadas = () => {
-    const items = (leaves || []).filter((l) => selected.has(l.id)).map((l) => ({ id: l.id, nombre: l.nombre, tipo, grupo: l.grupo }));
+  const agregar = () => {
+    const items = [...selected].map((id) => {
+      const item = tree.byId[id];
+      const parent = item?.parent_id ? tree.byId[item.parent_id] : null;
+      return { id, nombre: item?.nombre || "", tipo, grupo: parent?.nombre || "" };
+    });
     onAdd(items);
     onClose();
   };
@@ -1754,66 +1780,33 @@ function CategoryExplorerModal({ onClose, onAdd }) {
           {CASE_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
         </select>
 
-        {loadingLevels ? (
+        {loading ? (
           <div style={{ fontSize: 13, color: "var(--muted)" }}>Cargando...</div>
         ) : (
-          <div style={{ display: "flex", gap: 8, overflowX: "auto", paddingBottom: 4, marginBottom: 10 }}>
-            {levels.map((lvl, depth) => (
-              <select key={depth} value={lvl.selected} onChange={(e) => selectAt(depth, e.target.value)} style={{ ...inputStyle, flex: "0 0 200px", width: 200 }}>
-                <option value="">Seleccionar...</option>
-                {lvl.items.map((it) => <option key={it.id} value={it.id}>{it.nombre}</option>)}
-              </select>
-            ))}
-          </div>
-        )}
-
-        {current.id && (
-          <button onClick={verTodas} disabled={loadingLeaves} style={{ ...btnPrimary(true), marginBottom: 14 }}>
-            {loadingLeaves ? "Cargando..." : `Ver todas las opciones de "${current.nombre}"`}
-          </button>
-        )}
-
-        {leaves !== null && (
-          leaves.length === 0 ? (
-            <div style={{ fontSize: 13, color: "var(--muted)" }}>Esta categoría no tiene prestaciones puntuales cargadas debajo.</div>
-          ) : (
-            <div style={{ borderTop: "1px solid var(--border)", paddingTop: 14 }}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8, flexWrap: "wrap", gap: 8 }}>
-                <span style={{ fontSize: 12.5, color: "var(--muted)" }}>{leaves.length} opciones{selected.size > 0 ? ` · ${selected.size} elegidas` : ""}</span>
-                <div style={{ display: "flex", gap: 10 }}>
-                  <button onClick={() => setSelected(new Set(leavesFiltradas.map((l) => l.id)))} style={{ border: "none", background: "transparent", cursor: "pointer", fontSize: 12, fontWeight: 500, color: "var(--primary-dark)", fontFamily: "var(--font-body)", padding: 0 }}>Seleccionar todas</button>
-                  <button onClick={() => setSelected(new Set())} style={{ border: "none", background: "transparent", cursor: "pointer", fontSize: 12, fontWeight: 500, color: "var(--muted)", fontFamily: "var(--font-body)", padding: 0 }}>Ninguna</button>
-                </div>
-              </div>
-              {leaves.length > 8 && (
-                <input value={leafQuery} onChange={(e) => setLeafQuery(e.target.value)} placeholder="Filtrar por nombre..." style={{ ...inputStyle, marginBottom: 10 }} />
-              )}
-              <div style={{ display: "flex", flexDirection: "column", gap: 10, maxHeight: 300, overflowY: "auto" }}>
-                {Object.entries(grupos).map(([grupo, items]) => (
-                  <div key={grupo}>
-                    <div style={{ fontSize: 12, fontWeight: 600, color: "var(--muted)", marginBottom: 4 }}>{grupo}</div>
-                    <div style={{ display: "flex", flexDirection: "column", gap: 6, paddingLeft: 10 }}>
-                      {items.map((l) => (
-                        <label key={l.id} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "var(--ink)", cursor: "pointer" }}>
-                          <input type="checkbox" checked={selected.has(l.id)} onChange={() => toggleSelected(l.id)} />
-                          {l.nombre}
-                        </label>
-                      ))}
-                    </div>
-                  </div>
-                ))}
-              </div>
-              <button onClick={agregarSeleccionadas} disabled={selected.size === 0} style={{ ...btnPrimary(selected.size > 0), marginTop: 14 }}>
-                Agregar {selected.size > 0 ? `${selected.size} ` : ""}prestaciones
-              </button>
+          <>
+            <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Filtrar por nombre..." style={{ ...inputStyle, marginBottom: 10 }} />
+            {selected.size > 0 && (
+              <div style={{ fontSize: 12, color: "var(--primary-dark)", marginBottom: 8 }}>{selected.size} seleccionadas</div>
+            )}
+            <div style={{ border: "1px solid var(--border)", borderRadius: 8, padding: "8px 10px", maxHeight: 340, overflowY: "auto" }}>
+              {visibleRoots.length === 0 && <div style={{ fontSize: 12.5, color: "var(--muted)" }}>Sin resultados.</div>}
+              {visibleRoots.map((r) => (
+                <CatalogTreeNode
+                  key={r.id} item={r} depth={0} byParent={tree.byParent}
+                  selected={selected} toggleLeaf={toggleLeaf} toggleBranch={toggleBranch}
+                  collapsed={collapsed} toggleCollapse={toggleCollapse}
+                />
+              ))}
             </div>
-          )
+            <button onClick={agregar} disabled={selected.size === 0} style={{ ...btnPrimary(selected.size > 0), marginTop: 14 }}>
+              Agregar {selected.size > 0 ? `${selected.size} ` : ""}prestaciones
+            </button>
+          </>
         )}
       </div>
     </div>
   );
 }
-
 
 async function buscarPrestacionesCatalogo(query) {
   if (!query.trim()) return [];
@@ -1884,6 +1877,7 @@ function PrestadoresView({ perfil }) {
   const [prestacionBuscando, setPrestacionBuscando] = useState(false);
   const [showExplorer, setShowExplorer] = useState(false);
   const [ofrecidasQuery, setOfrecidasQuery] = useState("");
+  const [ofrecidasExpanded, setOfrecidasExpanded] = useState(new Set());
 
   const [showBulk, setShowBulk] = useState(false);
   const [bulkFile, setBulkFile] = useState(null);
@@ -2297,6 +2291,11 @@ function PrestadoresView({ perfil }) {
                   const ids = new Set(items.map((x) => x.id));
                   return { ...f, prestaciones_ofrecidas: f.prestaciones_ofrecidas.filter((x) => !ids.has(x.id)) };
                 });
+                const toggleGrupoExpandido = (grupo) => setOfrecidasExpanded((prev) => {
+                  const next = new Set(prev);
+                  if (next.has(grupo)) next.delete(grupo); else next.add(grupo);
+                  return next;
+                });
                 return (
                   <div style={{ marginBottom: 12 }}>
                     <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 6 }}>
@@ -2309,24 +2308,33 @@ function PrestadoresView({ perfil }) {
                       />
                     )}
                     <div style={{ border: "1px solid var(--border)", borderRadius: 8, maxHeight: 260, overflowY: "auto" }}>
-                      {Object.entries(grupos).map(([grupo, items]) => (
-                        <div key={grupo}>
-                          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "6px 10px", background: "var(--bg)" }}>
-                            <span style={{ fontSize: 11.5, fontWeight: 600, color: "var(--muted)" }}>{grupo} ({items.length})</span>
-                            <button onClick={() => quitarGrupo(items)} style={{ border: "none", background: "transparent", cursor: "pointer", fontSize: 11, color: "var(--primary-dark)", fontFamily: "var(--font-body)", padding: 0 }}>
-                              Quitar todas
-                            </button>
-                          </div>
-                          {items.map((pr) => (
-                            <div key={pr.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "6px 10px", borderTop: "1px solid var(--border)" }}>
-                              <span style={{ fontSize: 13, color: "var(--ink)" }}>{pr.nombre}</span>
-                              <button onClick={() => quitarPrestacionOfrecida(pr.id)} style={{ border: "none", background: "transparent", cursor: "pointer", padding: 0, display: "flex", color: "var(--muted)" }}>
-                                <X size={13} />
+                      {Object.entries(grupos).map(([grupo, items]) => {
+                        const expandido = ofrecidasExpanded.has(grupo) || !!q;
+                        return (
+                          <div key={grupo}>
+                            <div
+                              onClick={() => toggleGrupoExpandido(grupo)}
+                              style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "6px 10px", background: "var(--bg)", cursor: "pointer" }}
+                            >
+                              <span style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11.5, fontWeight: 600, color: "var(--muted)" }}>
+                                {expandido ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+                                {grupo} ({items.length})
+                              </span>
+                              <button onClick={(e) => { e.stopPropagation(); quitarGrupo(items); }} style={{ border: "none", background: "transparent", cursor: "pointer", fontSize: 11, color: "var(--primary-dark)", fontFamily: "var(--font-body)", padding: 0 }}>
+                                Quitar todas
                               </button>
                             </div>
-                          ))}
-                        </div>
-                      ))}
+                            {expandido && items.map((pr) => (
+                              <div key={pr.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "6px 10px 6px 26px", borderTop: "1px solid var(--border)" }}>
+                                <span style={{ fontSize: 13, color: "var(--ink)" }}>{pr.nombre}</span>
+                                <button onClick={() => quitarPrestacionOfrecida(pr.id)} style={{ border: "none", background: "transparent", cursor: "pointer", padding: 0, display: "flex", color: "var(--muted)" }}>
+                                  <X size={13} />
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        );
+                      })}
                       {visibles.length === 0 && (
                         <div style={{ padding: "8px 10px", fontSize: 12.5, color: "var(--muted)" }}>Ninguna coincide con la búsqueda.</div>
                       )}
