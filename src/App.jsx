@@ -1655,7 +1655,7 @@ function emptyPrestadorForm() {
   return {
     razon_social: "", nombre: "", cuit: "", telefono: "", email: "",
     domicilio: "", provincia: "", partido: "", localidad: "",
-    niveles_atencion: [], activo: true,
+    niveles_atencion: [], prestaciones_ofrecidas: [], activo: true,
   };
 }
 
@@ -1698,6 +1698,9 @@ function PrestadoresView({ perfil }) {
   const [partidos, setPartidos] = useState([]);
   const [localidades, setLocalidades] = useState([]);
 
+  const [prestacionTipo, setPrestacionTipo] = useState(CASE_TYPES[0]);
+  const [prestacionPick, setPrestacionPick] = useState({ id: "", nombre: "" });
+
   const [showBulk, setShowBulk] = useState(false);
   const [bulkFile, setBulkFile] = useState(null);
   const [bulkStatus, setBulkStatus] = useState("");
@@ -1706,7 +1709,7 @@ function PrestadoresView({ perfil }) {
   // Administrador Cliente: qué contrató con cada prestador (niveles + camas)
   const [contratos, setContratos] = useState({}); // prestador_id -> { niveles_contratados, cupo_camas, cantidad_camas }
   const [editingVinculo, setEditingVinculo] = useState(null); // prestador siendo vinculado/editado
-  const [vinculoForm, setVinculoForm] = useState({ cupo_camas: false, cantidad_camas: "" });
+  const [vinculoForm, setVinculoForm] = useState({ cupo_camas: false, cantidad_camas: "", prestaciones_contratadas: [] });
   const [vinculoSaving, setVinculoSaving] = useState(false);
   const [vinculoError, setVinculoError] = useState("");
 
@@ -1724,13 +1727,13 @@ function PrestadoresView({ perfil }) {
 
   useEffect(() => {
     if (!isAdminCliente) return;
-    supabase.from("prestador_clientes").select("prestador_id, niveles_contratados, cupo_camas, cantidad_camas, contrato_ruta").eq("cliente_id", perfil.cliente_id)
+    supabase.from("prestador_clientes").select("prestador_id, niveles_contratados, cupo_camas, cantidad_camas, contrato_ruta, prestaciones_contratadas").eq("cliente_id", perfil.cliente_id)
       .then(({ data }) => {
         const ids = new Set();
         const map = {};
         (data || []).forEach((r) => {
           ids.add(r.prestador_id);
-          map[r.prestador_id] = { niveles_contratados: r.niveles_contratados || [], cupo_camas: r.cupo_camas, cantidad_camas: r.cantidad_camas, contrato_ruta: r.contrato_ruta };
+          map[r.prestador_id] = { niveles_contratados: r.niveles_contratados || [], cupo_camas: r.cupo_camas, cantidad_camas: r.cantidad_camas, contrato_ruta: r.contrato_ruta, prestaciones_contratadas: r.prestaciones_contratadas || [] };
         });
         setLinkedIds(ids);
         setContratos(map);
@@ -1767,6 +1770,7 @@ function PrestadoresView({ perfil }) {
   const openNew = () => {
     setEditingId(null); setForm(emptyPrestadorForm()); setFormError("");
     setLinkedIds(new Set()); setFinanciadorQuery(""); setShowBulk(false); setShowForm(true);
+    setPrestacionTipo(CASE_TYPES[0]); setPrestacionPick({ id: "", nombre: "" });
   };
   const openEdit = (p) => {
     setEditingId(p.id);
@@ -1774,15 +1778,28 @@ function PrestadoresView({ perfil }) {
       razon_social: p.razon_social || "", nombre: p.nombre || "", cuit: p.cuit || "",
       telefono: p.telefono || "", email: p.email || "", domicilio: p.domicilio || "",
       provincia: p.provincia || "", partido: p.partido || "", localidad: p.localidad || "",
-      niveles_atencion: p.niveles_atencion || [], activo: p.activo,
+      niveles_atencion: p.niveles_atencion || [], prestaciones_ofrecidas: p.prestaciones_ofrecidas || [], activo: p.activo,
     });
     setFormError(""); setLinkError(""); setFinanciadorQuery(""); setShowBulk(false);
+    setPrestacionTipo(CASE_TYPES[0]); setPrestacionPick({ id: "", nombre: "" });
     loadLinks(p.id);
     setShowForm(true);
   };
   const setCampo = (campo, valor) => setForm((f) => ({ ...f, [campo]: valor }));
   const toggleNivelForm = (nivel) => setForm((f) => ({
     ...f, niveles_atencion: f.niveles_atencion.includes(nivel) ? f.niveles_atencion.filter((n) => n !== nivel) : [...f.niveles_atencion, nivel],
+  }));
+
+  const agregarPrestacionOfrecida = () => {
+    if (!prestacionPick.id) return;
+    setForm((f) => {
+      if (f.prestaciones_ofrecidas.some((x) => x.id === prestacionPick.id)) return f;
+      return { ...f, prestaciones_ofrecidas: [...f.prestaciones_ofrecidas, { id: prestacionPick.id, nombre: prestacionPick.nombre, tipo: prestacionTipo }] };
+    });
+    setPrestacionPick({ id: "", nombre: "" });
+  };
+  const quitarPrestacionOfrecida = (id) => setForm((f) => ({
+    ...f, prestaciones_ofrecidas: f.prestaciones_ofrecidas.filter((x) => x.id !== id),
   }));
 
   const guardarPrestador = async () => {
@@ -1792,7 +1809,7 @@ function PrestadoresView({ perfil }) {
       razon_social: form.razon_social.trim() || null, nombre: form.nombre.trim(), cuit: form.cuit.trim() || null,
       telefono: form.telefono.trim() || null, email: form.email.trim() || null, domicilio: form.domicilio.trim() || null,
       provincia: form.provincia || null, partido: form.partido || null, localidad: form.localidad || null,
-      niveles_atencion: form.niveles_atencion, activo: form.activo,
+      niveles_atencion: form.niveles_atencion, prestaciones_ofrecidas: form.prestaciones_ofrecidas, activo: form.activo,
     };
     if (editingId) {
       const { error } = await supabase.from("prestadores").update(payload).eq("id", editingId);
@@ -1855,15 +1872,23 @@ function PrestadoresView({ perfil }) {
     setVinculoForm({
       cupo_camas: actual?.cupo_camas || false,
       cantidad_camas: actual?.cantidad_camas != null ? String(actual.cantidad_camas) : "",
+      prestaciones_contratadas: actual?.prestaciones_contratadas || [],
     });
     setConvenioError(""); setVinculoError("");
   };
+  const toggleprestacionContratada = (pr) => setVinculoForm((f) => ({
+    ...f,
+    prestaciones_contratadas: f.prestaciones_contratadas.some((x) => x.id === pr.id)
+      ? f.prestaciones_contratadas.filter((x) => x.id !== pr.id)
+      : [...f.prestaciones_contratadas, pr],
+  }));
   const guardarVinculo = async () => {
     if (!editingVinculo) return;
     setVinculoSaving(true); setVinculoError("");
     const payload = {
       cupo_camas: vinculoForm.cupo_camas,
       cantidad_camas: (vinculoForm.cupo_camas && vinculoForm.cantidad_camas) ? Number(vinculoForm.cantidad_camas) : null,
+      prestaciones_contratadas: vinculoForm.prestaciones_contratadas,
     };
     const { error } = await supabase.from("prestador_clientes").update(payload).eq("prestador_id", editingVinculo.id).eq("cliente_id", perfil.cliente_id);
     setVinculoSaving(false);
@@ -1907,7 +1932,7 @@ function PrestadoresView({ perfil }) {
       : await supabase.from("prestador_clientes").insert(payload);
     if (error) { setLinkError(error.message); return; }
     setLinkedIds((prev) => new Set(prev).add(p.id));
-    setContratos((prev) => ({ ...prev, [p.id]: { niveles_contratados: next, cupo_camas: cupoCamas, cantidad_camas: cantidadCamas, contrato_ruta: prev[p.id]?.contrato_ruta } }));
+    setContratos((prev) => ({ ...prev, [p.id]: { niveles_contratados: next, cupo_camas: cupoCamas, cantidad_camas: cantidadCamas, contrato_ruta: prev[p.id]?.contrato_ruta, prestaciones_contratadas: prev[p.id]?.prestaciones_contratadas || [] } }));
   };
 
   const [convenioUploading, setConvenioUploading] = useState(false);
@@ -2059,6 +2084,43 @@ function PrestadoresView({ perfil }) {
               </div>
             </div>
 
+            <div style={{ marginTop: 20, paddingTop: 18, borderTop: "1px solid var(--border)" }}>
+              <div style={{ fontSize: 13.5, fontWeight: 600, color: "var(--ink)", marginBottom: 4 }}>Prestaciones que ofrece</div>
+              <p style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10 }}>
+                Elegí del catálogo, una por una, las prestaciones puntuales que este prestador puede brindar. Cada financiador después elige, al vincularlo, cuáles de estas le contrató.
+              </p>
+
+              {form.prestaciones_ofrecidas.length > 0 && (
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 12 }}>
+                  {form.prestaciones_ofrecidas.map((pr) => (
+                    <span key={pr.id} style={{
+                      display: "inline-flex", alignItems: "center", gap: 6, padding: "5px 10px", borderRadius: 20,
+                      background: "var(--primary-tint)", border: "1px solid var(--primary)", fontSize: 12.5, color: "var(--primary-dark)",
+                    }}>
+                      {pr.tipo}: {pr.nombre}
+                      <button onClick={() => quitarPrestacionOfrecida(pr.id)} style={{ border: "none", background: "transparent", cursor: "pointer", padding: 0, display: "flex", color: "var(--primary-dark)" }}>
+                        <X size={12} />
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              )}
+
+              <label style={labelStyle}>Tipo de auditoría</label>
+              <select value={prestacionTipo} onChange={(e) => { setPrestacionTipo(e.target.value); setPrestacionPick({ id: "", nombre: "" }); }} style={{ ...inputStyle, maxWidth: 320 }}>
+                {CASE_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+              </select>
+              <label style={{ ...labelStyle, marginTop: 12 }}>{CASE_TYPE_CONFIG[prestacionTipo].fieldLabel}</label>
+              <CatalogPicker
+                catalogoKey={CASE_TYPE_CONFIG[prestacionTipo].catalogKey}
+                onChange={(id, nombre) => setPrestacionPick({ id, nombre })}
+                canManage={false}
+              />
+              <button onClick={agregarPrestacionOfrecida} disabled={!prestacionPick.id} style={{ ...btnPrimary(!!prestacionPick.id), marginTop: 10 }}>
+                <Plus size={15} /> Agregar prestación
+              </button>
+            </div>
+
             {formError && <div style={{ marginTop: 12, fontSize: 12.5, color: "#A13333", background: "#FBE7E7", padding: "8px 10px", borderRadius: 8 }}>{formError}</div>}
 
             <button onClick={guardarPrestador} disabled={!form.nombre.trim() || saving} style={{ ...btnPrimary(!!form.nombre.trim()), marginTop: 16 }}>
@@ -2156,12 +2218,30 @@ function PrestadoresView({ perfil }) {
                     <input type="number" min="0" value={vinculoForm.cantidad_camas} onChange={(e) => setVinculoForm((f) => ({ ...f, cantidad_camas: e.target.value }))} style={{ ...inputStyle, maxWidth: 140 }} />
                   </div>
                 )}
-                {vinculoError && <div style={{ marginTop: 10, fontSize: 12, color: "#A13333", background: "#FBE7E7", padding: "8px 10px", borderRadius: 8 }}>{vinculoError}</div>}
-                <button onClick={guardarVinculo} disabled={vinculoSaving} style={{ ...btnPrimary(true), marginTop: 10 }}>
-                  {vinculoSaving ? "Guardando..." : "Guardar cupo de camas"}
-                </button>
               </div>
             )}
+
+            {(editingVinculo.prestaciones_ofrecidas || []).length > 0 && (
+              <div style={{ marginBottom: 14 }}>
+                <label style={labelStyle}>Prestaciones contratadas</label>
+                <p style={{ fontSize: 11.5, color: "var(--muted)", margin: "2px 0 8px" }}>
+                  Tildá cuáles de las prestaciones que ofrece este prestador le contrataste.
+                </p>
+                <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 200, overflowY: "auto" }}>
+                  {editingVinculo.prestaciones_ofrecidas.map((pr) => (
+                    <label key={pr.id} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "var(--ink)", cursor: "pointer" }}>
+                      <input type="checkbox" checked={vinculoForm.prestaciones_contratadas.some((x) => x.id === pr.id)} onChange={() => toggleprestacionContratada(pr)} />
+                      {pr.tipo}: {pr.nombre}
+                    </label>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {vinculoError && <div style={{ marginBottom: 10, fontSize: 12, color: "#A13333", background: "#FBE7E7", padding: "8px 10px", borderRadius: 8 }}>{vinculoError}</div>}
+            <button onClick={guardarVinculo} disabled={vinculoSaving} style={{ ...btnPrimary(true), marginBottom: 14 }}>
+              {vinculoSaving ? "Guardando..." : "Guardar"}
+            </button>
 
             <div style={{ paddingTop: 14, borderTop: "1px solid var(--border)" }}>
               <div style={{ fontSize: 13.5, fontWeight: 600, color: "var(--ink)", marginBottom: 4 }}>Convenio</div>
