@@ -1824,6 +1824,7 @@ async function exportarCatalogoCompleto() {
       tipo: CATALOG_KEY_TO_TIPO[it.catalogo_key] || it.catalogo_key,
       grupo: it.parent_id ? (byId[it.parent_id]?.nombre || "") : "",
       nombre: it.nombre,
+      ofrece: "",
       codigo: "",
     });
   });
@@ -1836,7 +1837,9 @@ function descargarCsv(filename, headers, rows) {
     return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
   };
   const lines = [headers.join(","), ...rows.map((r) => headers.map((h) => escape(r[h])).join(","))];
-  const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8;" });
+  // El \uFEFF (BOM) es necesario para que Excel detecte que el archivo es UTF-8
+  // y no rompa las tildes/ñ al abrirlo.
+  const blob = new Blob(["\uFEFF" + lines.join("\n")], { type: "text/csv;charset=utf-8;" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url; a.download = filename;
@@ -1845,7 +1848,8 @@ function descargarCsv(filename, headers, rows) {
 }
 
 function parsePrestacionesCompletadasCsv(text) {
-  const lines = text.split(/\r?\n/).filter((l) => l.trim().length > 0);
+  const clean = text.replace(/^\uFEFF/, "");
+  const lines = clean.split(/\r?\n/).filter((l) => l.trim().length > 0);
   if (lines.length < 2) return [];
   const headers = splitCsvLine(lines[0]).map((h) => h.toLowerCase().trim());
   return lines.slice(1).map((line) => {
@@ -2049,7 +2053,7 @@ function PrestadoresView({ perfil }) {
   const descargarCatalogo = async () => {
     setDescargandoCatalogo(true);
     const rows = await exportarCatalogoCompleto();
-    descargarCsv("catalogo_prestaciones.csv", ["id", "tipo", "grupo", "nombre", "codigo"], rows);
+    descargarCsv("catalogo_prestaciones.csv", ["id", "tipo", "grupo", "nombre", "ofrece", "codigo"], rows);
     setDescargandoCatalogo(false);
   };
 
@@ -2058,20 +2062,29 @@ function PrestadoresView({ perfil }) {
     setPrestacionesBulkLoading(true); setPrestacionesBulkStatus("");
     try {
       const text = await prestacionesBulkFile.text();
-      const filas = parsePrestacionesCompletadasCsv(text).filter((f) => f.id && f.id.trim());
-      if (filas.length === 0) {
+      const todas = parsePrestacionesCompletadasCsv(text).filter((f) => f.id && f.id.trim());
+      const tieneColumnaOfrece = todas.length > 0 && Object.prototype.hasOwnProperty.call(todas[0], "ofrece");
+      const marcadas = tieneColumnaOfrece
+        ? todas.filter((f) => /^(s|si|sí|x|1|yes)$/i.test((f.ofrece || "").trim()))
+        : todas;
+      if (todas.length === 0) {
         setPrestacionesBulkStatus("El archivo no tiene filas con la columna 'id' completa.");
+        setPrestacionesBulkLoading(false);
+        return;
+      }
+      if (tieneColumnaOfrece && marcadas.length === 0) {
+        setPrestacionesBulkStatus("Ninguna fila tiene la columna 'ofrece' marcada (con X, SI o 1).");
         setPrestacionesBulkLoading(false);
         return;
       }
       setForm((f) => {
         const yaIds = new Set(f.prestaciones_ofrecidas.map((x) => x.id));
-        const nuevas = filas.filter((fl) => !yaIds.has(fl.id.trim())).map((fl) => ({
+        const nuevas = marcadas.filter((fl) => !yaIds.has(fl.id.trim())).map((fl) => ({
           id: fl.id.trim(), nombre: fl.nombre || "", tipo: fl.tipo || "", grupo: fl.grupo || "", codigo: fl.codigo || "",
         }));
         return { ...f, prestaciones_ofrecidas: [...f.prestaciones_ofrecidas, ...nuevas] };
       });
-      setPrestacionesBulkStatus(`✓ ${filas.length} prestaciones agregadas.`);
+      setPrestacionesBulkStatus(`✓ ${marcadas.length} prestaciones agregadas.`);
       setPrestacionesBulkFile(null);
     } catch {
       setPrestacionesBulkStatus("No se pudo leer el archivo.");
@@ -2482,7 +2495,7 @@ function PrestadoresView({ perfil }) {
                 </button>
               </div>
               <p style={{ fontSize: 11, color: "var(--muted)", marginTop: 6 }}>
-                Bajás el catálogo completo, se lo pasás al prestador para que deje solo las filas que ofrece y complete su propio código en la columna "codigo", y subís de vuelta el archivo acá. Si le falta algo, avisale que te lo diga y lo cargás manual con el buscador o el explorador.
+                Bajás el catálogo completo y se lo pasás al prestador. Le pedís que ponga una <strong>X</strong> en la columna "ofrece" en cada prestación que brinda, y complete su propio código en "codigo" — no hace falta que borre nada. Subís de vuelta el archivo acá y se cargan solo las marcadas. Si le falta algo que no está en el catálogo, avisale que te lo diga y lo cargás manual con el buscador o el explorador.
               </p>
 
               {showPrestacionesBulk && (
