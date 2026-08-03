@@ -1722,6 +1722,7 @@ function PrestadoresView({ perfil }) {
   const [contratos, setContratos] = useState({}); // prestador_id -> { niveles_contratados, cupo_camas, cantidad_camas }
   const [editingVinculo, setEditingVinculo] = useState(null); // prestador siendo vinculado/editado
   const [vinculoForm, setVinculoForm] = useState({ cupo_camas: false, cantidad_camas: "", prestaciones_contratadas: [] });
+  const [vinculoPrestacionQuery, setVinculoPrestacionQuery] = useState("");
   const [vinculoSaving, setVinculoSaving] = useState(false);
   const [vinculoError, setVinculoError] = useState("");
 
@@ -1894,6 +1895,7 @@ function PrestadoresView({ perfil }) {
       cantidad_camas: actual?.cantidad_camas != null ? String(actual.cantidad_camas) : "",
       prestaciones_contratadas: actual?.prestaciones_contratadas || [],
     });
+    setVinculoPrestacionQuery("");
     setConvenioError(""); setVinculoError("");
   };
   const toggleprestacionContratada = (pr) => setVinculoForm((f) => ({
@@ -1918,6 +1920,10 @@ function PrestadoresView({ perfil }) {
   };
   const quitarVinculo = async () => {
     if (!editingVinculo) return;
+    const ok = window.confirm(
+      `¿Desvincular a ${editingVinculo.nombre} de tu organización? Se van a borrar los niveles tildados, las prestaciones contratadas y el convenio adjunto. El prestador va a dejar de poder cargar casos y ver tu padrón.`
+    );
+    if (!ok) return;
     setVinculoSaving(true); setVinculoError("");
     const { error } = await supabase.from("prestador_clientes").delete().eq("prestador_id", editingVinculo.id).eq("cliente_id", perfil.cliente_id);
     setVinculoSaving(false);
@@ -2262,14 +2268,23 @@ function PrestadoresView({ perfil }) {
                 <label style={labelStyle}>Prestaciones contratadas</label>
                 <p style={{ fontSize: 11.5, color: "var(--muted)", margin: "2px 0 8px" }}>
                   Tildá cuáles de las prestaciones que ofrece este prestador le contrataste.
+                  {vinculoForm.prestaciones_contratadas.length > 0 && ` (${vinculoForm.prestaciones_contratadas.length} seleccionadas)`}
                 </p>
+                {editingVinculo.prestaciones_ofrecidas.length > 6 && (
+                  <input
+                    value={vinculoPrestacionQuery} onChange={(e) => setVinculoPrestacionQuery(e.target.value)}
+                    placeholder="Filtrar por nombre..." style={{ ...inputStyle, marginBottom: 8 }}
+                  />
+                )}
                 <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 200, overflowY: "auto" }}>
-                  {editingVinculo.prestaciones_ofrecidas.map((pr) => (
-                    <label key={pr.id} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "var(--ink)", cursor: "pointer" }}>
-                      <input type="checkbox" checked={vinculoForm.prestaciones_contratadas.some((x) => x.id === pr.id)} onChange={() => toggleprestacionContratada(pr)} />
-                      {pr.tipo}: {pr.nombre}
-                    </label>
-                  ))}
+                  {editingVinculo.prestaciones_ofrecidas
+                    .filter((pr) => pr.nombre.toLowerCase().includes(vinculoPrestacionQuery.trim().toLowerCase()))
+                    .map((pr) => (
+                      <label key={pr.id} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "var(--ink)", cursor: "pointer" }}>
+                        <input type="checkbox" checked={vinculoForm.prestaciones_contratadas.some((x) => x.id === pr.id)} onChange={() => toggleprestacionContratada(pr)} />
+                        {pr.tipo}: {pr.nombre}
+                      </label>
+                    ))}
                 </div>
               </div>
             )}
@@ -2300,8 +2315,11 @@ function PrestadoresView({ perfil }) {
 
             <div style={{ marginTop: 18, paddingTop: 14, borderTop: "1px solid var(--border)" }}>
               <button onClick={quitarVinculo} disabled={vinculoSaving} style={{ padding: "9px 14px", borderRadius: 9, border: "1px solid #E3B8B8", background: "transparent", cursor: "pointer", fontSize: 13, fontFamily: "var(--font-body)", color: "#A13333" }}>
-                Quitar vínculo completo
+                Desvincular este prestador de mi organización
               </button>
+              <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 6 }}>
+                Borra todo lo tildado (niveles, prestaciones y convenio) y el prestador deja de poder cargar casos o ver tu padrón. No borra los casos ya cargados.
+              </div>
             </div>
           </div>
         </div>
@@ -2321,8 +2339,7 @@ function PrestadoresView({ perfil }) {
                 <th style={thStyle}>Localidad</th>
                 {isAdmin && <th style={thStyle}>Estado</th>}
                 {isAdminCliente && NIVELES_ATENCION.map(([val, label]) => <th key={val} style={{ ...thStyle, textAlign: "center" }}>{label}</th>)}
-                {isAdminCliente && <th style={thStyle}>Prestaciones</th>}
-                {isAdminCliente && <th style={thStyle}>Convenio</th>}
+                {isAdminCliente && <th style={thStyle}>Detalle</th>}
               </tr>
             </thead>
             <tbody>
@@ -2359,26 +2376,11 @@ function PrestadoresView({ perfil }) {
                       <td style={tdStyle}>
                         {!linkedIds.has(p.id) ? (
                           <span style={{ fontSize: 12, color: "var(--muted)" }}>—</span>
-                        ) : (p.prestaciones_ofrecidas || []).length === 0 ? (
-                          <span style={{ fontSize: 11.5, color: "var(--muted)" }}>Sin cargar por DA Salud</span>
                         ) : (
-                          <button onClick={() => abrirVinculo(p)} style={{ display: "flex", alignItems: "center", gap: 5, border: "none", background: "transparent", cursor: "pointer", fontSize: 12.5, color: "var(--primary-dark)", fontFamily: "var(--font-body)", padding: 0 }}>
-                            {(contrato?.prestaciones_contratadas || []).length > 0
-                              ? `${contrato.prestaciones_contratadas.length} contratada${contrato.prestaciones_contratadas.length === 1 ? "" : "s"}`
-                              : "Elegir"}
-                          </button>
-                        )}
-                      </td>
-                    )}
-                    {isAdminCliente && (
-                      <td style={tdStyle}>
-                        {linkedIds.has(p.id) ? (
                           <button onClick={() => abrirVinculo(p)} style={{ display: "flex", alignItems: "center", gap: 5, border: "none", background: "transparent", cursor: "pointer", fontSize: 12.5, color: "var(--primary-dark)", fontFamily: "var(--font-body)", padding: 0 }}>
                             {contrato?.contrato_ruta ? <FileText size={13} /> : <Paperclip size={13} />}
-                            {contrato?.contrato_ruta ? "Ver convenio" : "Adjuntar"}
+                            {(contrato?.prestaciones_contratadas || []).length > 0 ? `${contrato.prestaciones_contratadas.length} prestaciones` : "Prestaciones y convenio"}
                           </button>
-                        ) : (
-                          <span style={{ fontSize: 12, color: "var(--muted)" }}>—</span>
                         )}
                       </td>
                     )}
