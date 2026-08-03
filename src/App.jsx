@@ -1651,6 +1651,17 @@ const NIVELES_ATENCION = [
   ["3", "3º nivel"],
 ];
 
+const CATALOG_KEY_TO_TIPO = Object.fromEntries(
+  Object.entries(CASE_TYPE_CONFIG).map(([tipo, cfg]) => [cfg.catalogKey, tipo])
+);
+
+async function buscarPrestacionesCatalogo(query) {
+  if (!query.trim()) return [];
+  const { data } = await supabase.from("catalogo_items").select("id, nombre, catalogo_key")
+    .ilike("nombre", `%${query.trim()}%`).order("nombre").limit(12);
+  return (data || []).map((it) => ({ id: it.id, nombre: it.nombre, tipo: CATALOG_KEY_TO_TIPO[it.catalogo_key] || it.catalogo_key }));
+}
+
 function emptyPrestadorForm() {
   return {
     razon_social: "", nombre: "", cuit: "", telefono: "", email: "",
@@ -1698,8 +1709,9 @@ function PrestadoresView({ perfil }) {
   const [partidos, setPartidos] = useState([]);
   const [localidades, setLocalidades] = useState([]);
 
-  const [prestacionTipo, setPrestacionTipo] = useState(CASE_TYPES[0]);
-  const [prestacionPick, setPrestacionPick] = useState({ id: "", nombre: "" });
+  const [prestacionQuery, setPrestacionQuery] = useState("");
+  const [prestacionResultados, setPrestacionResultados] = useState([]);
+  const [prestacionBuscando, setPrestacionBuscando] = useState(false);
 
   const [showBulk, setShowBulk] = useState(false);
   const [bulkFile, setBulkFile] = useState(null);
@@ -1770,7 +1782,7 @@ function PrestadoresView({ perfil }) {
   const openNew = () => {
     setEditingId(null); setForm(emptyPrestadorForm()); setFormError("");
     setLinkedIds(new Set()); setFinanciadorQuery(""); setShowBulk(false); setShowForm(true);
-    setPrestacionTipo(CASE_TYPES[0]); setPrestacionPick({ id: "", nombre: "" });
+    setPrestacionQuery(""); setPrestacionResultados([]);
   };
   const openEdit = (p) => {
     setEditingId(p.id);
@@ -1781,7 +1793,7 @@ function PrestadoresView({ perfil }) {
       niveles_atencion: p.niveles_atencion || [], prestaciones_ofrecidas: p.prestaciones_ofrecidas || [], activo: p.activo,
     });
     setFormError(""); setLinkError(""); setFinanciadorQuery(""); setShowBulk(false);
-    setPrestacionTipo(CASE_TYPES[0]); setPrestacionPick({ id: "", nombre: "" });
+    setPrestacionQuery(""); setPrestacionResultados([]);
     loadLinks(p.id);
     setShowForm(true);
   };
@@ -1790,13 +1802,21 @@ function PrestadoresView({ perfil }) {
     ...f, niveles_atencion: f.niveles_atencion.includes(nivel) ? f.niveles_atencion.filter((n) => n !== nivel) : [...f.niveles_atencion, nivel],
   }));
 
-  const agregarPrestacionOfrecida = () => {
-    if (!prestacionPick.id) return;
+  useEffect(() => {
+    if (!prestacionQuery.trim()) { setPrestacionResultados([]); return; }
+    setPrestacionBuscando(true);
+    const t = setTimeout(() => {
+      buscarPrestacionesCatalogo(prestacionQuery).then((r) => { setPrestacionResultados(r); setPrestacionBuscando(false); });
+    }, 300);
+    return () => clearTimeout(t);
+  }, [prestacionQuery]);
+
+  const agregarPrestacionOfrecida = (pr) => {
     setForm((f) => {
-      if (f.prestaciones_ofrecidas.some((x) => x.id === prestacionPick.id)) return f;
-      return { ...f, prestaciones_ofrecidas: [...f.prestaciones_ofrecidas, { id: prestacionPick.id, nombre: prestacionPick.nombre, tipo: prestacionTipo }] };
+      if (f.prestaciones_ofrecidas.some((x) => x.id === pr.id)) return f;
+      return { ...f, prestaciones_ofrecidas: [...f.prestaciones_ofrecidas, pr] };
     });
-    setPrestacionPick({ id: "", nombre: "" });
+    setPrestacionQuery(""); setPrestacionResultados([]);
   };
   const quitarPrestacionOfrecida = (id) => setForm((f) => ({
     ...f, prestaciones_ofrecidas: f.prestaciones_ofrecidas.filter((x) => x.id !== id),
@@ -2087,7 +2107,7 @@ function PrestadoresView({ perfil }) {
             <div style={{ marginTop: 20, paddingTop: 18, borderTop: "1px solid var(--border)" }}>
               <div style={{ fontSize: 13.5, fontWeight: 600, color: "var(--ink)", marginBottom: 4 }}>Prestaciones que ofrece</div>
               <p style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10 }}>
-                Elegí del catálogo, una por una, las prestaciones puntuales que este prestador puede brindar. Cada financiador después elige, al vincularlo, cuáles de estas le contrató.
+                Buscá por nombre y agregá las prestaciones puntuales que este prestador puede brindar. Cada financiador después elige, al vincularlo, cuáles de estas le contrató.
               </p>
 
               {form.prestaciones_ofrecidas.length > 0 && (
@@ -2106,19 +2126,35 @@ function PrestadoresView({ perfil }) {
                 </div>
               )}
 
-              <label style={labelStyle}>Tipo de auditoría</label>
-              <select value={prestacionTipo} onChange={(e) => { setPrestacionTipo(e.target.value); setPrestacionPick({ id: "", nombre: "" }); }} style={{ ...inputStyle, maxWidth: 320 }}>
-                {CASE_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
-              </select>
-              <label style={{ ...labelStyle, marginTop: 12 }}>{CASE_TYPE_CONFIG[prestacionTipo].fieldLabel}</label>
-              <CatalogPicker
-                catalogoKey={CASE_TYPE_CONFIG[prestacionTipo].catalogKey}
-                onChange={(id, nombre) => setPrestacionPick({ id, nombre })}
-                canManage={false}
-              />
-              <button onClick={agregarPrestacionOfrecida} disabled={!prestacionPick.id} style={{ ...btnPrimary(!!prestacionPick.id), marginTop: 10 }}>
-                <Plus size={15} /> Agregar prestación
-              </button>
+              <div style={{ position: "relative" }}>
+                <Search size={14} color="var(--muted)" style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)" }} />
+                <input
+                  value={prestacionQuery} onChange={(e) => setPrestacionQuery(e.target.value)}
+                  placeholder="Buscar prestación por nombre (ej. Pediatría, Ecografía)..." style={{ ...inputStyle, paddingLeft: 30 }}
+                />
+              </div>
+              {prestacionQuery.trim() && (
+                <div style={{ marginTop: 6, border: "1px solid var(--border)", borderRadius: 8, maxHeight: 220, overflowY: "auto" }}>
+                  {prestacionBuscando && <div style={{ padding: "8px 10px", fontSize: 12.5, color: "var(--muted)" }}>Buscando...</div>}
+                  {!prestacionBuscando && prestacionResultados.length === 0 && (
+                    <div style={{ padding: "8px 10px", fontSize: 12.5, color: "var(--muted)" }}>Sin resultados.</div>
+                  )}
+                  {!prestacionBuscando && prestacionResultados.map((pr) => (
+                    <button
+                      key={pr.id}
+                      onClick={() => agregarPrestacionOfrecida(pr)}
+                      style={{
+                        display: "block", width: "100%", textAlign: "left", padding: "8px 10px", border: "none",
+                        background: "transparent", cursor: "pointer", fontSize: 13, color: "var(--ink)", fontFamily: "var(--font-body)",
+                      }}
+                      onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg)"; }}
+                      onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
+                    >
+                      <span style={{ color: "var(--muted)", fontSize: 11.5 }}>{pr.tipo}</span> · {pr.nombre}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
 
             {formError && <div style={{ marginTop: 12, fontSize: 12.5, color: "#A13333", background: "#FBE7E7", padding: "8px 10px", borderRadius: 8 }}>{formError}</div>}
@@ -2285,6 +2321,7 @@ function PrestadoresView({ perfil }) {
                 <th style={thStyle}>Localidad</th>
                 {isAdmin && <th style={thStyle}>Estado</th>}
                 {isAdminCliente && NIVELES_ATENCION.map(([val, label]) => <th key={val} style={{ ...thStyle, textAlign: "center" }}>{label}</th>)}
+                {isAdminCliente && <th style={thStyle}>Prestaciones</th>}
                 {isAdminCliente && <th style={thStyle}>Convenio</th>}
               </tr>
             </thead>
@@ -2318,6 +2355,21 @@ function PrestadoresView({ perfil }) {
                         />
                       </td>
                     ))}
+                    {isAdminCliente && (
+                      <td style={tdStyle}>
+                        {!linkedIds.has(p.id) ? (
+                          <span style={{ fontSize: 12, color: "var(--muted)" }}>—</span>
+                        ) : (p.prestaciones_ofrecidas || []).length === 0 ? (
+                          <span style={{ fontSize: 11.5, color: "var(--muted)" }}>Sin cargar por DA Salud</span>
+                        ) : (
+                          <button onClick={() => abrirVinculo(p)} style={{ display: "flex", alignItems: "center", gap: 5, border: "none", background: "transparent", cursor: "pointer", fontSize: 12.5, color: "var(--primary-dark)", fontFamily: "var(--font-body)", padding: 0 }}>
+                            {(contrato?.prestaciones_contratadas || []).length > 0
+                              ? `${contrato.prestaciones_contratadas.length} contratada${contrato.prestaciones_contratadas.length === 1 ? "" : "s"}`
+                              : "Elegir"}
+                          </button>
+                        )}
+                      </td>
+                    )}
                     {isAdminCliente && (
                       <td style={tdStyle}>
                         {linkedIds.has(p.id) ? (
