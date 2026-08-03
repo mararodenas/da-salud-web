@@ -1734,7 +1734,7 @@ function CategoryExplorerModal({ onClose, onAdd }) {
   leavesFiltradas.forEach((l) => { (grupos[l.grupo] ||= []).push(l); });
 
   const agregarSeleccionadas = () => {
-    const items = (leaves || []).filter((l) => selected.has(l.id)).map((l) => ({ id: l.id, nombre: l.nombre, tipo }));
+    const items = (leaves || []).filter((l) => selected.has(l.id)).map((l) => ({ id: l.id, nombre: l.nombre, tipo, grupo: l.grupo }));
     onAdd(items);
     onClose();
   };
@@ -1817,9 +1817,19 @@ function CategoryExplorerModal({ onClose, onAdd }) {
 
 async function buscarPrestacionesCatalogo(query) {
   if (!query.trim()) return [];
-  const { data } = await supabase.from("catalogo_items").select("id, nombre, catalogo_key")
+  const { data } = await supabase.from("catalogo_items").select("id, nombre, catalogo_key, parent_id")
     .ilike("nombre", `%${query.trim()}%`).order("nombre").limit(12);
-  return (data || []).map((it) => ({ id: it.id, nombre: it.nombre, tipo: CATALOG_KEY_TO_TIPO[it.catalogo_key] || it.catalogo_key }));
+  if (!data || data.length === 0) return [];
+  const parentIds = [...new Set(data.map((d) => d.parent_id).filter(Boolean))];
+  let parentNames = {};
+  if (parentIds.length > 0) {
+    const { data: parents } = await supabase.from("catalogo_items").select("id, nombre").in("id", parentIds);
+    (parents || []).forEach((p) => { parentNames[p.id] = p.nombre; });
+  }
+  return data.map((it) => ({
+    id: it.id, nombre: it.nombre, tipo: CATALOG_KEY_TO_TIPO[it.catalogo_key] || it.catalogo_key,
+    grupo: parentNames[it.parent_id] || "",
+  }));
 }
 
 function emptyPrestadorForm() {
@@ -1873,6 +1883,7 @@ function PrestadoresView({ perfil }) {
   const [prestacionResultados, setPrestacionResultados] = useState([]);
   const [prestacionBuscando, setPrestacionBuscando] = useState(false);
   const [showExplorer, setShowExplorer] = useState(false);
+  const [ofrecidasQuery, setOfrecidasQuery] = useState("");
 
   const [showBulk, setShowBulk] = useState(false);
   const [bulkFile, setBulkFile] = useState(null);
@@ -1944,7 +1955,7 @@ function PrestadoresView({ perfil }) {
   const openNew = () => {
     setEditingId(null); setForm(emptyPrestadorForm()); setFormError("");
     setLinkedIds(new Set()); setFinanciadorQuery(""); setShowBulk(false); setShowForm(true);
-    setPrestacionQuery(""); setPrestacionResultados([]);
+    setPrestacionQuery(""); setPrestacionResultados([]); setOfrecidasQuery("");
   };
   const openEdit = (p) => {
     setEditingId(p.id);
@@ -1955,7 +1966,7 @@ function PrestadoresView({ perfil }) {
       niveles_atencion: p.niveles_atencion || [], prestaciones_ofrecidas: p.prestaciones_ofrecidas || [], activo: p.activo,
     });
     setFormError(""); setLinkError(""); setFinanciadorQuery(""); setShowBulk(false);
-    setPrestacionQuery(""); setPrestacionResultados([]);
+    setPrestacionQuery(""); setPrestacionResultados([]); setOfrecidasQuery("");
     loadLinks(p.id);
     setShowForm(true);
   };
@@ -2277,21 +2288,52 @@ function PrestadoresView({ perfil }) {
                 Buscá por nombre y agregá las prestaciones puntuales que este prestador puede brindar. Cada financiador después elige, al vincularlo, cuáles de estas le contrató.
               </p>
 
-              {form.prestaciones_ofrecidas.length > 0 && (
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 12 }}>
-                  {form.prestaciones_ofrecidas.map((pr) => (
-                    <span key={pr.id} style={{
-                      display: "inline-flex", alignItems: "center", gap: 6, padding: "5px 10px", borderRadius: 20,
-                      background: "var(--primary-tint)", border: "1px solid var(--primary)", fontSize: 12.5, color: "var(--primary-dark)",
-                    }}>
-                      {pr.tipo}: {pr.nombre}
-                      <button onClick={() => quitarPrestacionOfrecida(pr.id)} style={{ border: "none", background: "transparent", cursor: "pointer", padding: 0, display: "flex", color: "var(--primary-dark)" }}>
-                        <X size={12} />
-                      </button>
-                    </span>
-                  ))}
-                </div>
-              )}
+              {form.prestaciones_ofrecidas.length > 0 && (() => {
+                const q = ofrecidasQuery.trim().toLowerCase();
+                const visibles = form.prestaciones_ofrecidas.filter((pr) => pr.nombre.toLowerCase().includes(q));
+                const grupos = {};
+                visibles.forEach((pr) => { (grupos[pr.grupo || pr.tipo] ||= []).push(pr); });
+                const quitarGrupo = (items) => setForm((f) => {
+                  const ids = new Set(items.map((x) => x.id));
+                  return { ...f, prestaciones_ofrecidas: f.prestaciones_ofrecidas.filter((x) => !ids.has(x.id)) };
+                });
+                return (
+                  <div style={{ marginBottom: 12 }}>
+                    <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 6 }}>
+                      {form.prestaciones_ofrecidas.length} cargada{form.prestaciones_ofrecidas.length === 1 ? "" : "s"}
+                    </div>
+                    {form.prestaciones_ofrecidas.length > 8 && (
+                      <input
+                        value={ofrecidasQuery} onChange={(e) => setOfrecidasQuery(e.target.value)}
+                        placeholder="Buscar en las ya agregadas..." style={{ ...inputStyle, marginBottom: 8 }}
+                      />
+                    )}
+                    <div style={{ border: "1px solid var(--border)", borderRadius: 8, maxHeight: 260, overflowY: "auto" }}>
+                      {Object.entries(grupos).map(([grupo, items]) => (
+                        <div key={grupo}>
+                          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "6px 10px", background: "var(--bg)" }}>
+                            <span style={{ fontSize: 11.5, fontWeight: 600, color: "var(--muted)" }}>{grupo} ({items.length})</span>
+                            <button onClick={() => quitarGrupo(items)} style={{ border: "none", background: "transparent", cursor: "pointer", fontSize: 11, color: "var(--primary-dark)", fontFamily: "var(--font-body)", padding: 0 }}>
+                              Quitar todas
+                            </button>
+                          </div>
+                          {items.map((pr) => (
+                            <div key={pr.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "6px 10px", borderTop: "1px solid var(--border)" }}>
+                              <span style={{ fontSize: 13, color: "var(--ink)" }}>{pr.nombre}</span>
+                              <button onClick={() => quitarPrestacionOfrecida(pr.id)} style={{ border: "none", background: "transparent", cursor: "pointer", padding: 0, display: "flex", color: "var(--muted)" }}>
+                                <X size={13} />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      ))}
+                      {visibles.length === 0 && (
+                        <div style={{ padding: "8px 10px", fontSize: 12.5, color: "var(--muted)" }}>Ninguna coincide con la búsqueda.</div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })()}
 
               <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
                 <div style={{ position: "relative", flex: 1 }}>
