@@ -108,6 +108,15 @@ function splitCsvLine(line) {
   return result;
 }
 
+function fechaDdMmAaaaAIso(str) {
+  if (!str) return null;
+  const s = str.trim();
+  const m = s.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})$/);
+  if (!m) return null;
+  const [, dd, mm, aaaa] = m;
+  return `${aaaa}-${mm.padStart(2, "0")}-${dd.padStart(2, "0")}`;
+}
+
 function parseAfiliadosCsv(text) {
   const lines = text.split(/\r?\n/).filter((l) => l.trim().length > 0);
   if (lines.length < 2) return [];
@@ -264,13 +273,26 @@ function PadronView({ perfil }) {
       const text = await bulkFile.text();
       const filas = parseAfiliadosCsv(text);
       if (filas.length === 0) { setBulkStatus("El archivo no tiene filas para cargar."); setBulkLoading(false); return; }
-      const payload = filas.map((f) => ({
-        cliente_id: clienteId,
-        nombre: f.nombre || "", dni: f.dni || "", fecha_nacimiento: f.fecha_nacimiento || null,
-        numero_afiliado: f.numero_afiliado || "", provincia: f.provincia || "", partido: f.partido || "", localidad: f.localidad || "",
-        domicilio: f.domicilio || "", telefono_celular: f.telefono_celular || "", email: f.email || "",
-        plan_contratado: f.plan_contratado || "", estado: f.estado || "Activo",
-      }));
+      const fechasInvalidas = [];
+      const payload = filas.map((f, i) => {
+        let fecha = null;
+        if (f.fecha_nacimiento) {
+          fecha = fechaDdMmAaaaAIso(f.fecha_nacimiento);
+          if (!fecha) fechasInvalidas.push(`fila ${i + 2}: "${f.fecha_nacimiento}"`);
+        }
+        return {
+          cliente_id: clienteId,
+          nombre: f.nombre || "", dni: f.dni || "", fecha_nacimiento: fecha,
+          numero_afiliado: f.numero_afiliado || "", provincia: f.provincia || "", partido: f.partido || "", localidad: f.localidad || "",
+          domicilio: f.domicilio || "", telefono_celular: f.telefono_celular || "", email: f.email || "",
+          plan_contratado: f.plan_contratado || "", estado: f.estado || "Activo",
+        };
+      });
+      if (fechasInvalidas.length > 0) {
+        setBulkLoading(false);
+        setBulkStatus(`Hay fechas con formato inválido (tiene que ser DD-MM-AAAA): ${fechasInvalidas.join(", ")}.`);
+        return;
+      }
       const { error } = await supabase.from("afiliados").insert(payload);
       setBulkLoading(false);
       if (error) { setBulkStatus("Error: " + error.message); return; }
@@ -331,7 +353,7 @@ function PadronView({ perfil }) {
                 Subí un archivo CSV con la primera fila como encabezado, con estas columnas en cualquier orden:{" "}
                 <span style={{ fontFamily: "var(--font-mono)", fontSize: 11.5 }}>
                   nombre, dni, fecha_nacimiento, numero_afiliado, provincia, partido, localidad, domicilio, telefono_celular, email, plan_contratado, estado
-                </span>. La fecha de nacimiento en formato AAAA-MM-DD.
+                </span>. La fecha de nacimiento en formato DD-MM-AAAA.
               </p>
               <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
                 <input type="file" accept=".csv,text/csv" onChange={(e) => setBulkFile(e.target.files?.[0] || null)} style={{ fontSize: 12.5, fontFamily: "var(--font-body)" }} />
@@ -976,6 +998,16 @@ function CaseModal({ c, now, canDecide, perfil, onClose, onChanged }) {
   const [savingEdit, setSavingEdit] = useState(false);
   const [editError, setEditError] = useState("");
 
+  const [convenioRuta, setConvenioRuta] = useState(null);
+  useEffect(() => {
+    if (!canDecide || !c.creado_por) return;
+    supabase.from("perfiles").select("prestador_id").eq("id", c.creado_por).single().then(({ data: perf }) => {
+      if (!perf?.prestador_id) return;
+      supabase.from("prestador_clientes").select("contrato_ruta").eq("prestador_id", perf.prestador_id).eq("cliente_id", c.cliente_id).single()
+        .then(({ data }) => { if (data?.contrato_ruta) setConvenioRuta(data.contrato_ruta); });
+    });
+  }, [canDecide, c.creado_por, c.cliente_id]);
+
   const st = STATUS_STYLE[c.estado] || { bg: "#eee", fg: "#333" };
   const sla = slaInfo(c.vence_en, c.estado, now);
   const tone = TONE_COLORS[sla.tone];
@@ -1122,6 +1154,11 @@ function CaseModal({ c, now, canDecide, perfil, onClose, onChanged }) {
             {c.afiliados?.plan_id && (
               <button onClick={() => verContratoDePlan(c.afiliados.plan_id)} style={{ display: "flex", alignItems: "center", gap: 4, border: "none", background: "transparent", cursor: "pointer", fontSize: 11.5, color: "var(--primary-dark)", fontFamily: "var(--font-body)", padding: 0, marginTop: 3 }}>
                 <FileText size={11} /> Ver contrato del plan
+              </button>
+            )}
+            {convenioRuta && (
+              <button onClick={() => verContratoStorage(convenioRuta)} style={{ display: "flex", alignItems: "center", gap: 4, border: "none", background: "transparent", cursor: "pointer", fontSize: 11.5, color: "var(--primary-dark)", fontFamily: "var(--font-body)", padding: 0, marginTop: 3 }}>
+                <FileText size={11} /> Ver convenio con el prestador
               </button>
             )}
           </div>
@@ -1669,7 +1706,7 @@ function PrestadoresView({ perfil }) {
   // Administrador Cliente: qué contrató con cada prestador (niveles + camas)
   const [contratos, setContratos] = useState({}); // prestador_id -> { niveles_contratados, cupo_camas, cantidad_camas }
   const [editingVinculo, setEditingVinculo] = useState(null); // prestador siendo vinculado/editado
-  const [vinculoForm, setVinculoForm] = useState({ niveles_contratados: [], cupo_camas: false, cantidad_camas: "" });
+  const [vinculoForm, setVinculoForm] = useState({ cupo_camas: false, cantidad_camas: "" });
   const [vinculoSaving, setVinculoSaving] = useState(false);
   const [vinculoError, setVinculoError] = useState("");
 
@@ -1687,13 +1724,13 @@ function PrestadoresView({ perfil }) {
 
   useEffect(() => {
     if (!isAdminCliente) return;
-    supabase.from("prestador_clientes").select("prestador_id, niveles_contratados, cupo_camas, cantidad_camas").eq("cliente_id", perfil.cliente_id)
+    supabase.from("prestador_clientes").select("prestador_id, niveles_contratados, cupo_camas, cantidad_camas, contrato_ruta").eq("cliente_id", perfil.cliente_id)
       .then(({ data }) => {
         const ids = new Set();
         const map = {};
         (data || []).forEach((r) => {
           ids.add(r.prestador_id);
-          map[r.prestador_id] = { niveles_contratados: r.niveles_contratados || [], cupo_camas: r.cupo_camas, cantidad_camas: r.cantidad_camas };
+          map[r.prestador_id] = { niveles_contratados: r.niveles_contratados || [], cupo_camas: r.cupo_camas, cantidad_camas: r.cantidad_camas, contrato_ruta: r.contrato_ruta };
         });
         setLinkedIds(ids);
         setContratos(map);
@@ -1811,41 +1848,27 @@ function PrestadoresView({ perfil }) {
     }
   };
 
-  // Administrador Cliente: abre el vínculo con un prestador (niveles contratados + camas)
+  // Administrador Cliente: abre el detalle de un vínculo ya tildado (camas + convenio)
   const abrirVinculo = (p) => {
     const actual = contratos[p.id];
     setEditingVinculo(p);
     setVinculoForm({
-      niveles_contratados: actual?.niveles_contratados || [],
       cupo_camas: actual?.cupo_camas || false,
       cantidad_camas: actual?.cantidad_camas != null ? String(actual.cantidad_camas) : "",
     });
-    setVinculoError("");
+    setConvenioError(""); setVinculoError("");
   };
-  const toggleNivelVinculo = (nivel) => setVinculoForm((f) => {
-    const next = f.niveles_contratados.includes(nivel) ? f.niveles_contratados.filter((n) => n !== nivel) : [...f.niveles_contratados, nivel];
-    return { ...f, niveles_contratados: next, cupo_camas: next.includes("3") ? f.cupo_camas : false };
-  });
   const guardarVinculo = async () => {
     if (!editingVinculo) return;
     setVinculoSaving(true); setVinculoError("");
     const payload = {
-      prestador_id: editingVinculo.id, cliente_id: perfil.cliente_id,
-      niveles_contratados: vinculoForm.niveles_contratados,
-      cupo_camas: vinculoForm.niveles_contratados.includes("3") ? vinculoForm.cupo_camas : false,
-      cantidad_camas: (vinculoForm.niveles_contratados.includes("3") && vinculoForm.cupo_camas && vinculoForm.cantidad_camas)
-        ? Number(vinculoForm.cantidad_camas) : null,
+      cupo_camas: vinculoForm.cupo_camas,
+      cantidad_camas: (vinculoForm.cupo_camas && vinculoForm.cantidad_camas) ? Number(vinculoForm.cantidad_camas) : null,
     };
-    const isLinked = linkedIds.has(editingVinculo.id);
-    const { error } = isLinked
-      ? await supabase.from("prestador_clientes").update(payload).eq("prestador_id", editingVinculo.id).eq("cliente_id", perfil.cliente_id)
-      : await supabase.from("prestador_clientes").insert(payload);
+    const { error } = await supabase.from("prestador_clientes").update(payload).eq("prestador_id", editingVinculo.id).eq("cliente_id", perfil.cliente_id);
     setVinculoSaving(false);
     if (error) { setVinculoError(error.message); return; }
-    setLinkedIds((prev) => new Set(prev).add(editingVinculo.id));
-    setContratos((prev) => ({ ...prev, [editingVinculo.id]: {
-      niveles_contratados: payload.niveles_contratados, cupo_camas: payload.cupo_camas, cantidad_camas: payload.cantidad_camas,
-    } }));
+    setContratos((prev) => ({ ...prev, [editingVinculo.id]: { ...prev[editingVinculo.id], ...payload } }));
     setEditingVinculo(null);
   };
   const quitarVinculo = async () => {
@@ -1857,6 +1880,51 @@ function PrestadoresView({ perfil }) {
     setLinkedIds((prev) => { const next = new Set(prev); next.delete(editingVinculo.id); return next; });
     setContratos((prev) => { const next = { ...prev }; delete next[editingVinculo.id]; return next; });
     setEditingVinculo(null);
+  };
+
+  // Administrador Cliente: tilda/destilda un nivel directo desde la tabla (sin abrir modal)
+  const toggleNivelInline = async (p, nivel) => {
+    setLinkError("");
+    const actual = contratos[p.id]?.niveles_contratados || [];
+    const next = actual.includes(nivel) ? actual.filter((n) => n !== nivel) : [...actual, nivel];
+    const yaVinculado = linkedIds.has(p.id);
+
+    if (next.length === 0) {
+      if (yaVinculado) {
+        const { error } = await supabase.from("prestador_clientes").delete().eq("prestador_id", p.id).eq("cliente_id", perfil.cliente_id);
+        if (error) { setLinkError(error.message); return; }
+      }
+      setLinkedIds((prev) => { const s = new Set(prev); s.delete(p.id); return s; });
+      setContratos((prev) => { const c = { ...prev }; delete c[p.id]; return c; });
+      return;
+    }
+
+    const cupoCamas = next.includes("3") ? (contratos[p.id]?.cupo_camas || false) : false;
+    const cantidadCamas = next.includes("3") ? (contratos[p.id]?.cantidad_camas ?? null) : null;
+    const payload = { prestador_id: p.id, cliente_id: perfil.cliente_id, niveles_contratados: next, cupo_camas: cupoCamas, cantidad_camas: cantidadCamas };
+    const { error } = yaVinculado
+      ? await supabase.from("prestador_clientes").update(payload).eq("prestador_id", p.id).eq("cliente_id", perfil.cliente_id)
+      : await supabase.from("prestador_clientes").insert(payload);
+    if (error) { setLinkError(error.message); return; }
+    setLinkedIds((prev) => new Set(prev).add(p.id));
+    setContratos((prev) => ({ ...prev, [p.id]: { niveles_contratados: next, cupo_camas: cupoCamas, cantidad_camas: cantidadCamas, contrato_ruta: prev[p.id]?.contrato_ruta } }));
+  };
+
+  const [convenioUploading, setConvenioUploading] = useState(false);
+  const [convenioError, setConvenioError] = useState("");
+  const subirConvenio = async (e) => {
+    const file = e.target.files[0];
+    e.target.value = "";
+    if (!file || !editingVinculo) return;
+    setConvenioUploading(true); setConvenioError("");
+    const safeName = file.name.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-zA-Z0-9.\-_]/g, "_");
+    const path = `${perfil.cliente_id}/prestadores/${editingVinculo.id}/${Date.now()}-${safeName}`;
+    const { error: upErr } = await supabase.storage.from("contratos").upload(path, file);
+    if (upErr) { setConvenioError(upErr.message); setConvenioUploading(false); return; }
+    const { error } = await supabase.from("prestador_clientes").update({ contrato_ruta: path }).eq("prestador_id", editingVinculo.id).eq("cliente_id", perfil.cliente_id);
+    setConvenioUploading(false);
+    if (error) { setConvenioError(error.message); return; }
+    setContratos((prev) => ({ ...prev, [editingVinculo.id]: { ...prev[editingVinculo.id], contrato_ruta: path } }));
   };
 
   const thStyle = { textAlign: "left", padding: "10px 10px", fontSize: 11, fontWeight: 700, letterSpacing: "0.04em", textTransform: "uppercase", color: "var(--primary-dark)", background: "var(--primary-tint)", borderBottom: "2px solid var(--primary)", whiteSpace: "nowrap" };
@@ -2065,27 +2133,19 @@ function PrestadoresView({ perfil }) {
       {isAdminCliente && editingVinculo && (
         <div onClick={() => setEditingVinculo(null)} style={{ position: "fixed", inset: 0, background: "rgba(15,37,71,0.4)", zIndex: 1000, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "40px 20px", overflowY: "auto" }}>
           <div onClick={(e) => e.stopPropagation()} style={{ ...cardStyle, padding: 20, maxWidth: 480, width: "100%" }}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
               <div style={{ fontSize: 14, fontWeight: 600, color: "var(--ink)" }}>{editingVinculo.nombre}</div>
               <button onClick={() => setEditingVinculo(null)} style={{ border: "none", background: "transparent", cursor: "pointer", color: "var(--muted)" }}>
                 <X size={16} />
               </button>
             </div>
-            <label style={labelStyle}>Nivel de atención que contrataste</label>
-            <div style={{ display: "flex", gap: 16, marginTop: 4, marginBottom: 4 }}>
-              {NIVELES_ATENCION.filter(([val]) => (editingVinculo.niveles_atencion || []).length === 0 || editingVinculo.niveles_atencion.includes(val)).map(([val, label]) => (
-                <label key={val} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "var(--ink)", cursor: "pointer" }}>
-                  <input type="checkbox" checked={vinculoForm.niveles_contratados.includes(val)} onChange={() => toggleNivelVinculo(val)} />
-                  {label}
-                </label>
-              ))}
+            <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 16 }}>
+              Nivel contratado: {(contratos[editingVinculo.id]?.niveles_contratados || []).map((v) => NIVELES_ATENCION.find(([val]) => val === v)?.[1]).join(", ") || "—"}
+              {" "}<span style={{ color: "var(--primary-dark)" }}>(se tilda desde la tabla)</span>
             </div>
-            {(editingVinculo.niveles_atencion || []).length === 0 && (
-              <div style={{ fontSize: 11.5, color: "var(--muted)", marginBottom: 10 }}>Este prestador todavía no tiene niveles de atención cargados por DA Salud.</div>
-            )}
 
-            {vinculoForm.niveles_contratados.includes("3") && (
-              <div style={{ marginTop: 14, padding: 12, background: "var(--bg)", borderRadius: 8 }}>
+            {(contratos[editingVinculo.id]?.niveles_contratados || []).includes("3") && (
+              <div style={{ padding: 12, background: "var(--bg)", borderRadius: 8, marginBottom: 14 }}>
                 <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "var(--ink)", cursor: "pointer" }}>
                   <input type="checkbox" checked={vinculoForm.cupo_camas} onChange={(e) => setVinculoForm((f) => ({ ...f, cupo_camas: e.target.checked }))} />
                   ¿Tiene cupo de camas asignado en 3º nivel?
@@ -2096,20 +2156,36 @@ function PrestadoresView({ perfil }) {
                     <input type="number" min="0" value={vinculoForm.cantidad_camas} onChange={(e) => setVinculoForm((f) => ({ ...f, cantidad_camas: e.target.value }))} style={{ ...inputStyle, maxWidth: 140 }} />
                   </div>
                 )}
+                {vinculoError && <div style={{ marginTop: 10, fontSize: 12, color: "#A13333", background: "#FBE7E7", padding: "8px 10px", borderRadius: 8 }}>{vinculoError}</div>}
+                <button onClick={guardarVinculo} disabled={vinculoSaving} style={{ ...btnPrimary(true), marginTop: 10 }}>
+                  {vinculoSaving ? "Guardando..." : "Guardar cupo de camas"}
+                </button>
               </div>
             )}
 
-            {vinculoError && <div style={{ marginTop: 12, fontSize: 12.5, color: "#A13333", background: "#FBE7E7", padding: "8px 10px", borderRadius: 8 }}>{vinculoError}</div>}
-
-            <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
-              <button onClick={guardarVinculo} disabled={vinculoSaving} style={btnPrimary(true)}>
-                {vinculoSaving ? "Guardando..." : "Guardar"}
-              </button>
-              {linkedIds.has(editingVinculo.id) && (
-                <button onClick={quitarVinculo} disabled={vinculoSaving} style={{ padding: "11px 16px", borderRadius: 9, border: "1px solid #E3B8B8", background: "transparent", cursor: "pointer", fontSize: 13.5, fontFamily: "var(--font-body)", color: "#A13333" }}>
-                  Quitar vínculo
+            <div style={{ paddingTop: 14, borderTop: "1px solid var(--border)" }}>
+              <div style={{ fontSize: 13.5, fontWeight: 600, color: "var(--ink)", marginBottom: 4 }}>Convenio</div>
+              <p style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10 }}>
+                Subí el contrato/convenio firmado con este prestador — ahí están las reglas de negocio que después vamos a auditar.
+              </p>
+              {contratos[editingVinculo.id]?.contrato_ruta ? (
+                <button onClick={() => verContratoStorage(contratos[editingVinculo.id].contrato_ruta)} style={{ display: "flex", alignItems: "center", gap: 6, border: "none", background: "transparent", cursor: "pointer", fontSize: 12.5, color: "var(--primary-dark)", fontFamily: "var(--font-body)", padding: 0, marginBottom: 8 }}>
+                  <FileText size={14} /> Ver convenio actual
                 </button>
+              ) : (
+                <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 8 }}>Todavía no hay convenio adjunto.</div>
               )}
+              <label style={{ fontSize: 12.5, fontWeight: 500, color: "var(--primary-dark)", cursor: convenioUploading ? "default" : "pointer", display: "flex", alignItems: "center", gap: 5, width: "fit-content" }}>
+                <Paperclip size={12} /> {convenioUploading ? "Subiendo..." : (contratos[editingVinculo.id]?.contrato_ruta ? "Reemplazar convenio" : "Adjuntar convenio")}
+                <input type="file" onChange={subirConvenio} disabled={convenioUploading} style={{ display: "none" }} />
+              </label>
+              {convenioError && <div style={{ marginTop: 10, fontSize: 12, color: "#A13333", background: "#FBE7E7", padding: "8px 10px", borderRadius: 8 }}>{convenioError}</div>}
+            </div>
+
+            <div style={{ marginTop: 18, paddingTop: 14, borderTop: "1px solid var(--border)" }}>
+              <button onClick={quitarVinculo} disabled={vinculoSaving} style={{ padding: "9px 14px", borderRadius: 9, border: "1px solid #E3B8B8", background: "transparent", cursor: "pointer", fontSize: 13, fontFamily: "var(--font-body)", color: "#A13333" }}>
+                Quitar vínculo completo
+              </button>
             </div>
           </div>
         </div>
@@ -2128,12 +2204,15 @@ function PrestadoresView({ perfil }) {
                 <th style={thStyle}>CUIT</th>
                 <th style={thStyle}>Localidad</th>
                 {isAdmin && <th style={thStyle}>Estado</th>}
-                {isAdminCliente && <th style={thStyle}>Vínculo</th>}
+                {isAdminCliente && NIVELES_ATENCION.map(([val, label]) => <th key={val} style={{ ...thStyle, textAlign: "center" }}>{label}</th>)}
+                {isAdminCliente && <th style={thStyle}>Convenio</th>}
               </tr>
             </thead>
             <tbody>
               {filtrados.map((p) => {
                 const contrato = contratos[p.id];
+                const niveles = contrato?.niveles_contratados || [];
+                const ofrece = (val) => (p.niveles_atencion || []).length === 0 || (p.niveles_atencion || []).includes(val);
                 return (
                   <tr
                     key={p.id}
@@ -2150,18 +2229,24 @@ function PrestadoresView({ perfil }) {
                         <Pill bg={p.activo ? "#EAF3DE" : "#FCEBEB"} fg={p.activo ? "#27500A" : "#791F1F"}>{p.activo ? "Activo" : "Inactivo"}</Pill>
                       </td>
                     )}
+                    {isAdminCliente && NIVELES_ATENCION.map(([val]) => (
+                      <td key={val} style={{ ...tdStyle, textAlign: "center" }}>
+                        <input
+                          type="checkbox" checked={niveles.includes(val)} disabled={!ofrece(val)}
+                          onChange={() => toggleNivelInline(p, val)}
+                          title={!ofrece(val) ? "Este prestador no ofrece este nivel" : ""}
+                        />
+                      </td>
+                    ))}
                     {isAdminCliente && (
                       <td style={tdStyle}>
                         {linkedIds.has(p.id) ? (
                           <button onClick={() => abrirVinculo(p)} style={{ display: "flex", alignItems: "center", gap: 5, border: "none", background: "transparent", cursor: "pointer", fontSize: 12.5, color: "var(--primary-dark)", fontFamily: "var(--font-body)", padding: 0 }}>
-                            <Pill bg="#EAF3DE" fg="#27500A">
-                              Vinculado{contrato?.niveles_contratados?.length ? ` · N° ${contrato.niveles_contratados.sort().join(",")}` : ""}
-                            </Pill>
+                            {contrato?.contrato_ruta ? <FileText size={13} /> : <Paperclip size={13} />}
+                            {contrato?.contrato_ruta ? "Ver convenio" : "Adjuntar"}
                           </button>
                         ) : (
-                          <button onClick={() => abrirVinculo(p)} style={{ ...btnPrimary(true), padding: "5px 12px", fontSize: 12 }}>
-                            + Vincular
-                          </button>
+                          <span style={{ fontSize: 12, color: "var(--muted)" }}>—</span>
                         )}
                       </td>
                     )}
