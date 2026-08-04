@@ -2019,13 +2019,13 @@ function PrestadoresView({ perfil }) {
 
   useEffect(() => {
     if (!isAdminCliente) return;
-    supabase.from("prestador_clientes").select("prestador_id, niveles_contratados, cupo_camas, cantidad_camas, contrato_ruta, prestaciones_contratadas").eq("cliente_id", perfil.cliente_id)
+    supabase.from("prestador_clientes").select("prestador_id, niveles_contratados, cupo_camas, cantidad_camas, contrato_ruta, prestaciones_contratadas, activo").eq("cliente_id", perfil.cliente_id)
       .then(({ data }) => {
         const ids = new Set();
         const map = {};
         (data || []).forEach((r) => {
           ids.add(r.prestador_id);
-          map[r.prestador_id] = { niveles_contratados: r.niveles_contratados || [], cupo_camas: r.cupo_camas, cantidad_camas: r.cantidad_camas, contrato_ruta: r.contrato_ruta, prestaciones_contratadas: r.prestaciones_contratadas || [] };
+          map[r.prestador_id] = { niveles_contratados: r.niveles_contratados || [], cupo_camas: r.cupo_camas, cantidad_camas: r.cantidad_camas, contrato_ruta: r.contrato_ruta, prestaciones_contratadas: r.prestaciones_contratadas || [], activo: r.activo };
         });
         setLinkedIds(ids);
         setContratos(map);
@@ -2270,6 +2270,18 @@ function PrestadoresView({ perfil }) {
     setEditingVinculo(null);
   };
 
+  // Pausar/reactivar: a diferencia de "Desvincular", no borra niveles/prestaciones/convenio —
+  // solo bloquea que cargue casos nuevos hasta que se reactive.
+  const togglePausaVinculo = async () => {
+    if (!editingVinculo) return;
+    const activo = !(contratos[editingVinculo.id]?.activo ?? true);
+    setVinculoSaving(true); setVinculoError("");
+    const { error } = await supabase.from("prestador_clientes").update({ activo }).eq("prestador_id", editingVinculo.id).eq("cliente_id", perfil.cliente_id);
+    setVinculoSaving(false);
+    if (error) { setVinculoError(error.message); return; }
+    setContratos((prev) => ({ ...prev, [editingVinculo.id]: { ...prev[editingVinculo.id], activo } }));
+  };
+
   // Administrador Cliente: tilda/destilda un nivel directo desde la tabla (sin abrir modal)
   const toggleNivelInline = async (p, nivel) => {
     setLinkError("");
@@ -2295,7 +2307,7 @@ function PrestadoresView({ perfil }) {
       : await supabase.from("prestador_clientes").insert(payload);
     if (error) { setLinkError(error.message); return; }
     setLinkedIds((prev) => new Set(prev).add(p.id));
-    setContratos((prev) => ({ ...prev, [p.id]: { niveles_contratados: next, cupo_camas: cupoCamas, cantidad_camas: cantidadCamas, contrato_ruta: prev[p.id]?.contrato_ruta, prestaciones_contratadas: prev[p.id]?.prestaciones_contratadas || [] } }));
+    setContratos((prev) => ({ ...prev, [p.id]: { niveles_contratados: next, cupo_camas: cupoCamas, cantidad_camas: cantidadCamas, contrato_ruta: prev[p.id]?.contrato_ruta, prestaciones_contratadas: prev[p.id]?.prestaciones_contratadas || [], activo: prev[p.id]?.activo ?? true } }));
   };
 
   const [convenioUploading, setConvenioUploading] = useState(false);
@@ -2679,9 +2691,18 @@ function PrestadoresView({ perfil }) {
                 <X size={16} />
               </button>
             </div>
-            <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 16 }}>
+            <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10 }}>
               Nivel contratado: {(contratos[editingVinculo.id]?.niveles_contratados || []).map((v) => NIVELES_ATENCION.find(([val]) => val === v)?.[1]).join(", ") || "—"}
               {" "}<span style={{ color: "var(--primary-dark)" }}>(se tilda desde la tabla)</span>
+            </div>
+
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, padding: "10px 12px", borderRadius: 8, marginBottom: 16, background: (contratos[editingVinculo.id]?.activo ?? true) ? "#EAF3DE" : "#FCEBEB" }}>
+              <span style={{ fontSize: 12.5, fontWeight: 600, color: (contratos[editingVinculo.id]?.activo ?? true) ? "#27500A" : "#791F1F" }}>
+                {(contratos[editingVinculo.id]?.activo ?? true) ? "Vínculo activo" : "Vínculo pausado — no puede cargar casos nuevos"}
+              </span>
+              <button onClick={togglePausaVinculo} disabled={vinculoSaving} style={{ border: "none", background: "transparent", cursor: "pointer", fontSize: 12, fontWeight: 600, color: (contratos[editingVinculo.id]?.activo ?? true) ? "#791F1F" : "#27500A", fontFamily: "var(--font-body)" }}>
+                {(contratos[editingVinculo.id]?.activo ?? true) ? "Pausar" : "Reactivar"}
+              </button>
             </div>
 
             {(contratos[editingVinculo.id]?.niveles_contratados || []).includes("3") && (
@@ -2820,7 +2841,7 @@ function PrestadoresView({ perfil }) {
               {filtrados.map((p) => {
                 const contrato = contratos[p.id];
                 const niveles = contrato?.niveles_contratados || [];
-                const ofrece = (val) => (p.niveles_atencion || []).length === 0 || (p.niveles_atencion || []).includes(val);
+                const ofrece = (val) => p.activo && ((p.niveles_atencion || []).length === 0 || (p.niveles_atencion || []).includes(val));
                 return (
                   <tr
                     key={p.id}
@@ -2842,7 +2863,7 @@ function PrestadoresView({ perfil }) {
                         <input
                           type="checkbox" checked={niveles.includes(val)} disabled={!ofrece(val)}
                           onChange={() => toggleNivelInline(p, val)}
-                          title={!ofrece(val) ? "Este prestador no ofrece este nivel" : ""}
+                          title={!p.activo ? "El prestador está inactivo" : (!ofrece(val) ? "Este prestador no ofrece este nivel" : "")}
                         />
                       </td>
                     ))}
@@ -2851,9 +2872,11 @@ function PrestadoresView({ perfil }) {
                         {!linkedIds.has(p.id) ? (
                           <span style={{ fontSize: 12, color: "var(--muted)" }}>—</span>
                         ) : (
-                          <button onClick={() => abrirVinculo(p)} style={{ display: "flex", alignItems: "center", gap: 5, border: "none", background: "transparent", cursor: "pointer", fontSize: 12.5, color: "var(--primary-dark)", fontFamily: "var(--font-body)", padding: 0 }}>
-                            {contrato?.contrato_ruta ? <FileText size={13} /> : <Paperclip size={13} />}
-                            {(contrato?.prestaciones_contratadas || []).length > 0 ? `${contrato.prestaciones_contratadas.length} prestaciones` : "Prestaciones y convenio"}
+                          <button onClick={() => abrirVinculo(p)} style={{ display: "flex", alignItems: "center", gap: 5, border: "none", background: "transparent", cursor: "pointer", fontSize: 12.5, color: (contrato?.activo ?? true) ? "var(--primary-dark)" : "#A13333", fontFamily: "var(--font-body)", padding: 0 }}>
+                            {(contrato?.activo ?? true) ? (contrato?.contrato_ruta ? <FileText size={13} /> : <Paperclip size={13} />) : <AlertTriangle size={13} />}
+                            {(contrato?.activo ?? true)
+                              ? ((contrato?.prestaciones_contratadas || []).length > 0 ? `${contrato.prestaciones_contratadas.length} prestaciones` : "Prestaciones y convenio")
+                              : "Pausado"}
                           </button>
                         )}
                       </td>
@@ -3394,16 +3417,17 @@ function AppShell({ session }) {
   };
 
   useEffect(() => {
-    supabase.from("perfiles").select("nombre, rol, cliente_id, clientes(nombre), prestador_id, prestadores(nombre, cuit, telefono, email, domicilio)").eq("id", session.user.id).single()
+    supabase.from("perfiles").select("nombre, rol, cliente_id, clientes(nombre), prestador_id, prestadores(nombre, cuit, telefono, email, domicilio, activo)").eq("id", session.user.id).single()
       .then(async ({ data }) => {
         if (!data) { setPerfil(null); return; }
         let p = {
           ...data, id: session.user.id, cliente_nombre: data.clientes?.nombre, prestador_nombre: data.prestadores?.nombre,
           prestador_cuit: data.prestadores?.cuit, prestador_telefono: data.prestadores?.telefono,
           prestador_email: data.prestadores?.email, prestador_domicilio: data.prestadores?.domicilio,
+          prestador_activo: data.prestadores?.activo,
         };
         if (data.rol === "Prestador" && data.prestador_id) {
-          const { data: pc } = await supabase.from("prestador_clientes").select("clientes(id, nombre)").eq("prestador_id", data.prestador_id);
+          const { data: pc } = await supabase.from("prestador_clientes").select("clientes(id, nombre)").eq("prestador_id", data.prestador_id).eq("activo", true);
           p.clientesContratados = (pc || []).map((row) => row.clientes).filter(Boolean);
         }
         setPerfil(p);
@@ -3415,6 +3439,23 @@ function AppShell({ session }) {
   }, [session]);
 
   if (!perfil || !view) return <div style={{ minHeight: "100vh", background: "var(--bg)" }} />;
+
+  if (perfil.rol === "Prestador" && perfil.prestador_id && perfil.prestador_activo === false) {
+    return (
+      <div style={{ position: "fixed", inset: 0, background: "var(--bg)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+        <div style={{ ...cardStyle, padding: 28, maxWidth: 420, width: "100%", textAlign: "center" }}>
+          <AlertTriangle size={28} color="#A13333" style={{ marginBottom: 10 }} />
+          <div style={{ fontSize: 15, fontWeight: 600, color: "var(--ink)", marginBottom: 6 }}>Cuenta pausada</div>
+          <p style={{ fontSize: 13, color: "var(--muted)", marginBottom: 18, lineHeight: 1.5 }}>
+            {perfil.prestador_nombre} está marcado como inactivo. No podés cargar ni ver casos hasta que DA Salud lo reactive. Si te parece un error, contactalos.
+          </p>
+          <button onClick={() => { try { localStorage.removeItem("da_salud_view"); } catch { /* ignore */ } supabase.auth.signOut(); }} style={{ ...btnPrimary(true), width: "100%", justifyContent: "center" }}>
+            Salir
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   if (perfil.rol === "Prestador" && perfil.prestador_id && !perfil.prestador_cuit) {
     return (
