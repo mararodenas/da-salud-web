@@ -1924,14 +1924,14 @@ function parsePrestadoresCsv(text) {
 // descarga, sin tener que renombrar nada a mano.
 const PRESTADOR_HEADER_ALIASES = {
   razon_social: "razon_social",
-  nombre: "nombre",
+  nombre: "nombre", establecimiento_nombre: "nombre",
   cuit: "cuit",
   domicilio: "domicilio",
   te1: "telefono", telefono: "telefono",
   mail1: "email", email: "email",
-  provincia: "provincia",
-  partido: "partido", departamento: "partido",
-  localidad: "localidad",
+  provincia: "provincia", provincia_nombre: "provincia",
+  partido: "partido", departamento: "partido", departamento_nombre: "partido",
+  localidad: "localidad", localidad_nombre: "localidad",
   niveles_atencion: "niveles_atencion",
 };
 
@@ -2358,7 +2358,7 @@ function PrestadoresView({ perfil }) {
               razon_social, nombre, cuit, telefono, email, domicilio, provincia, partido, localidad, niveles_atencion
             </span>. Para "niveles_atencion", separá varios con una barra, ej. <span style={{ fontFamily: "var(--font-mono)", fontSize: 11.5 }}>1|2|3</span>.
             <br /><br />
-            <strong>También podés subir directo el CSV del REFES</strong> (Registro Federal de Establecimientos de Salud, Ministerio de Salud) sin renombrar columnas — reconoce <span style={{ fontFamily: "var(--font-mono)", fontSize: 11.5 }}>RAZON_SOCIAL, NOMBRE, CUIT, DOMICILIO, TE1, MAIL1, PROVINCIA, LOCALIDAD</span>. Como el REFES no trae Partido/Departamento, el sistema lo resuelve solo consultando la API oficial por cada localidad (puede tardar un poco con archivos grandes).
+            <strong>También podés subir directo el CSV público del REFES</strong> (datos.salud.gob.ar) sin renombrar columnas — reconoce <span style={{ fontFamily: "var(--font-mono)", fontSize: 11.5 }}>establecimiento_nombre, provincia_nombre, localidad_nombre, departamento_nombre, domicilio</span> (el Partido ya viene incluido en ese archivo). Ese archivo no trae CUIT, teléfono ni email — cada prestador los completa él mismo la primera vez que entra al sistema.
           </p>
           <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
             <input type="file" accept=".csv,text/csv" onChange={(e) => setBulkFile(e.target.files?.[0] || null)} style={{ fontSize: 12.5, fontFamily: "var(--font-body)" }} />
@@ -3335,7 +3335,55 @@ function ProximamenteView({ titulo, descripcion }) {
   );
 }
 
+function CompletarDatosPrestadorModal({ perfil, onGuardado }) {
+  const [form, setForm] = useState({
+    cuit: perfil.prestador_cuit || "", telefono: perfil.prestador_telefono || "",
+    email: perfil.prestador_email || "", domicilio: perfil.prestador_domicilio || "",
+  });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  const guardar = async () => {
+    if (!form.cuit.trim()) return;
+    setSaving(true); setError("");
+    const { error } = await supabase.from("prestadores").update({
+      cuit: form.cuit.trim(), telefono: form.telefono.trim() || null,
+      email: form.email.trim() || null, domicilio: form.domicilio.trim() || null,
+    }).eq("id", perfil.prestador_id);
+    setSaving(false);
+    if (error) { setError(error.message); return; }
+    onGuardado(form);
+  };
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(15,37,71,0.55)", zIndex: 2000, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+      <div style={{ ...cardStyle, padding: 24, maxWidth: 440, width: "100%" }}>
+        <div style={{ fontSize: 15, fontWeight: 600, color: "var(--ink)", marginBottom: 6 }}>Completá los datos de {perfil.prestador_nombre}</div>
+        <p style={{ fontSize: 13, color: "var(--muted)", marginBottom: 18, lineHeight: 1.5 }}>
+          Antes de seguir, necesitamos que completes el CUIT de tu organización. El resto es opcional pero te recomendamos cargarlo.
+        </p>
+        <label style={labelStyle}>CUIT *</label>
+        <input value={form.cuit} onChange={(e) => setForm((f) => ({ ...f, cuit: e.target.value }))} placeholder="30-12345678-9" style={inputStyle} autoFocus />
+        <label style={{ ...labelStyle, marginTop: 12 }}>Teléfono</label>
+        <input value={form.telefono} onChange={(e) => setForm((f) => ({ ...f, telefono: e.target.value }))} style={inputStyle} />
+        <label style={{ ...labelStyle, marginTop: 12 }}>Correo electrónico</label>
+        <input type="email" value={form.email} onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))} style={inputStyle} />
+        <label style={{ ...labelStyle, marginTop: 12 }}>Domicilio</label>
+        <input value={form.domicilio} onChange={(e) => setForm((f) => ({ ...f, domicilio: e.target.value }))} style={inputStyle} />
+        {error && <div style={{ marginTop: 12, fontSize: 12.5, color: "#A13333", background: "#FBE7E7", padding: "8px 10px", borderRadius: 8 }}>{error}</div>}
+        <button onClick={guardar} disabled={!form.cuit.trim() || saving} style={{ ...btnPrimary(!!form.cuit.trim()), marginTop: 16, width: "100%", justifyContent: "center" }}>
+          {saving ? "Guardando..." : "Guardar y continuar"}
+        </button>
+        <button onClick={() => supabase.auth.signOut()} style={{ display: "block", margin: "12px auto 0", border: "none", background: "transparent", cursor: "pointer", fontSize: 12.5, color: "var(--muted)", fontFamily: "var(--font-body)" }}>
+          Salir
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function AppShell({ session }) {
+
   const [perfil, setPerfil] = useState(null);
   const [view, setViewRaw] = useState(null);
   const [refreshKey, setRefreshKey] = useState(0);
@@ -3346,10 +3394,14 @@ function AppShell({ session }) {
   };
 
   useEffect(() => {
-    supabase.from("perfiles").select("nombre, rol, cliente_id, clientes(nombre), prestador_id, prestadores(nombre)").eq("id", session.user.id).single()
+    supabase.from("perfiles").select("nombre, rol, cliente_id, clientes(nombre), prestador_id, prestadores(nombre, cuit, telefono, email, domicilio)").eq("id", session.user.id).single()
       .then(async ({ data }) => {
         if (!data) { setPerfil(null); return; }
-        let p = { ...data, id: session.user.id, cliente_nombre: data.clientes?.nombre, prestador_nombre: data.prestadores?.nombre };
+        let p = {
+          ...data, id: session.user.id, cliente_nombre: data.clientes?.nombre, prestador_nombre: data.prestadores?.nombre,
+          prestador_cuit: data.prestadores?.cuit, prestador_telefono: data.prestadores?.telefono,
+          prestador_email: data.prestadores?.email, prestador_domicilio: data.prestadores?.domicilio,
+        };
         if (data.rol === "Prestador" && data.prestador_id) {
           const { data: pc } = await supabase.from("prestador_clientes").select("clientes(id, nombre)").eq("prestador_id", data.prestador_id);
           p.clientesContratados = (pc || []).map((row) => row.clientes).filter(Boolean);
@@ -3363,6 +3415,18 @@ function AppShell({ session }) {
   }, [session]);
 
   if (!perfil || !view) return <div style={{ minHeight: "100vh", background: "var(--bg)" }} />;
+
+  if (perfil.rol === "Prestador" && perfil.prestador_id && !perfil.prestador_cuit) {
+    return (
+      <CompletarDatosPrestadorModal
+        perfil={perfil}
+        onGuardado={(datos) => setPerfil((p) => ({
+          ...p, prestador_cuit: datos.cuit, prestador_telefono: datos.telefono,
+          prestador_email: datos.email, prestador_domicilio: datos.domicilio,
+        }))}
+      />
+    );
+  }
 
   const VIEW_TITLES = {
     padron: "Padrón", nuevo: "Nuevo caso", casos: "Casos", clientes: "Clientes", prestadores: "Prestadores", reglas: "Reglas de negocio",
