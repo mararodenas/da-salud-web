@@ -2001,6 +2001,10 @@ function PrestadoresView({ perfil }) {
   const [contratos, setContratos] = useState({}); // prestador_id -> { niveles_contratados, cupo_camas, cantidad_camas }
   const [editingVinculo, setEditingVinculo] = useState(null); // prestador siendo vinculado/editado
   const [vinculoForm, setVinculoForm] = useState({ cupo_camas: false, cantidad_camas: "", prestaciones_contratadas: [] });
+  const [contactoForm, setContactoForm] = useState({ telefono: "", email: "", domicilio: "" });
+  const [contactoSaving, setContactoSaving] = useState(false);
+  const [contactoError, setContactoError] = useState("");
+  const [contactoGuardado, setContactoGuardado] = useState(false);
   const [vinculoPrestacionQuery, setVinculoPrestacionQuery] = useState("");
   const [vinculoSaving, setVinculoSaving] = useState(false);
   const [vinculoError, setVinculoError] = useState("");
@@ -2057,6 +2061,7 @@ function PrestadoresView({ perfil }) {
   const q = search.trim().toLowerCase();
   const filtrados = !q ? prestadores : prestadores.filter((p) =>
     (p.nombre || "").toLowerCase().includes(q) || (p.cuit || "").toLowerCase().includes(q) || (p.razon_social || "").toLowerCase().includes(q)
+    || (p.provincia || "").toLowerCase().includes(q) || (p.partido || "").toLowerCase().includes(q) || (p.localidad || "").toLowerCase().includes(q)
   );
 
   const openNew = () => {
@@ -2167,6 +2172,22 @@ function PrestadoresView({ perfil }) {
     }
   };
 
+  const eliminarPrestador = async () => {
+    if (!editingId) return;
+    const ok = window.confirm(
+      `¿Eliminar a "${form.nombre}" definitivamente? Se van a borrar sus vínculos con financiadores (niveles, prestaciones contratadas y convenios). Los casos que ya se hayan cargado no se borran, pero quedan sin prestador asociado. Esta acción no se puede deshacer.`
+    );
+    if (!ok) return;
+    setSaving(true); setFormError("");
+    await supabase.from("prestador_clientes").delete().eq("prestador_id", editingId);
+    await supabase.from("perfiles").update({ prestador_id: null }).eq("prestador_id", editingId);
+    const { error } = await supabase.from("prestadores").delete().eq("id", editingId);
+    setSaving(false);
+    if (error) { setFormError(error.message); return; }
+    setShowForm(false);
+    load();
+  };
+
   // Administrador: tilda/destilda qué financiadores trabajan con el prestador que está editando
   const toggleFinanciador = async (clienteId) => {
     if (!editingId) return;
@@ -2232,8 +2253,20 @@ function PrestadoresView({ perfil }) {
       cantidad_camas: actual?.cantidad_camas != null ? String(actual.cantidad_camas) : "",
       prestaciones_contratadas: actual?.prestaciones_contratadas || [],
     });
+    setContactoForm({ telefono: p.telefono || "", email: p.email || "", domicilio: p.domicilio || "" });
+    setContactoError(""); setContactoGuardado(false);
     setVinculoPrestacionQuery("");
     setConvenioError(""); setVinculoError("");
+  };
+  const guardarContacto = async () => {
+    if (!editingVinculo) return;
+    setContactoSaving(true); setContactoError(""); setContactoGuardado(false);
+    const { error } = await supabase.from("prestadores").update({
+      telefono: contactoForm.telefono.trim() || null, email: contactoForm.email.trim() || null, domicilio: contactoForm.domicilio.trim() || null,
+    }).eq("id", editingVinculo.id);
+    setContactoSaving(false);
+    if (error) { setContactoError(error.message); return; }
+    setContactoGuardado(true);
   };
   const toggleprestacionContratada = (pr) => setVinculoForm((f) => ({
     ...f,
@@ -2355,7 +2388,7 @@ function PrestadoresView({ perfil }) {
         ) : <div />}
         <div style={{ position: "relative", flex: "1 1 260px", maxWidth: 360 }}>
           <Search size={15} color="var(--muted)" style={{ position: "absolute", left: 11, top: "50%", transform: "translateY(-50%)" }} />
-          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Buscar por nombre, razón social o CUIT..." style={{ ...inputStyle, paddingLeft: 34 }} />
+          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Buscar por nombre, razón social, CUIT, provincia, partido o localidad..." style={{ ...inputStyle, paddingLeft: 34 }} />
         </div>
       </div>
 
@@ -2613,9 +2646,16 @@ function PrestadoresView({ perfil }) {
 
             {formError && <div style={{ marginTop: 12, fontSize: 12.5, color: "#A13333", background: "#FBE7E7", padding: "8px 10px", borderRadius: 8 }}>{formError}</div>}
 
-            <button onClick={guardarPrestador} disabled={!form.nombre.trim() || saving} style={{ ...btnPrimary(!!form.nombre.trim()), marginTop: 16 }}>
-              {saving ? "Guardando..." : editingId ? "Guardar cambios" : "Crear prestador"}
-            </button>
+            <div style={{ display: "flex", gap: 8, marginTop: 16, alignItems: "center" }}>
+              <button onClick={guardarPrestador} disabled={!form.nombre.trim() || saving} style={btnPrimary(!!form.nombre.trim())}>
+                {saving ? "Guardando..." : editingId ? "Guardar cambios" : "Crear prestador"}
+              </button>
+              {editingId && (
+                <button onClick={eliminarPrestador} disabled={saving} style={{ padding: "11px 16px", borderRadius: 9, border: "1px solid #E3B8B8", background: "transparent", cursor: "pointer", fontSize: 13.5, fontFamily: "var(--font-body)", color: "#A13333" }}>
+                  Eliminar prestador
+                </button>
+              )}
+            </div>
 
             <div style={{ marginTop: 24, paddingTop: 18, borderTop: "1px solid var(--border)" }}>
               <div style={{ fontSize: 13.5, fontWeight: 600, color: "var(--ink)", marginBottom: 4 }}>Financiadores con los que trabaja</div>
@@ -2702,6 +2742,23 @@ function PrestadoresView({ perfil }) {
               </span>
               <button onClick={togglePausaVinculo} disabled={vinculoSaving} style={{ border: "none", background: "transparent", cursor: "pointer", fontSize: 12, fontWeight: 600, color: (contratos[editingVinculo.id]?.activo ?? true) ? "#791F1F" : "#27500A", fontFamily: "var(--font-body)" }}>
                 {(contratos[editingVinculo.id]?.activo ?? true) ? "Pausar" : "Reactivar"}
+              </button>
+            </div>
+
+            <div style={{ marginBottom: 16, paddingBottom: 16, borderBottom: "1px solid var(--border)" }}>
+              <div style={{ fontSize: 13.5, fontWeight: 600, color: "var(--ink)", marginBottom: 8 }}>Datos de contacto</div>
+              <p style={{ fontSize: 11.5, color: "var(--muted)", marginBottom: 10 }}>
+                Podés corregir estos tres campos si están mal o incompletos. El resto de la ficha (nombre, CUIT, niveles) lo gestiona DA Salud.
+              </p>
+              <label style={labelStyle}>Teléfono</label>
+              <input value={contactoForm.telefono} onChange={(e) => { setContactoForm((f) => ({ ...f, telefono: e.target.value })); setContactoGuardado(false); }} style={inputStyle} />
+              <label style={{ ...labelStyle, marginTop: 10 }}>Correo electrónico</label>
+              <input type="email" value={contactoForm.email} onChange={(e) => { setContactoForm((f) => ({ ...f, email: e.target.value })); setContactoGuardado(false); }} style={inputStyle} />
+              <label style={{ ...labelStyle, marginTop: 10 }}>Domicilio</label>
+              <input value={contactoForm.domicilio} onChange={(e) => { setContactoForm((f) => ({ ...f, domicilio: e.target.value })); setContactoGuardado(false); }} style={inputStyle} />
+              {contactoError && <div style={{ marginTop: 8, fontSize: 12, color: "#A13333", background: "#FBE7E7", padding: "8px 10px", borderRadius: 8 }}>{contactoError}</div>}
+              <button onClick={guardarContacto} disabled={contactoSaving} style={{ ...btnPrimary(true), marginTop: 10, padding: "8px 14px", fontSize: 12.5 }}>
+                {contactoSaving ? "Guardando..." : contactoGuardado ? "✓ Guardado" : "Guardar contacto"}
               </button>
             </div>
 
@@ -2831,6 +2888,7 @@ function PrestadoresView({ perfil }) {
               <tr>
                 <th style={thStyle}>Nombre</th>
                 <th style={thStyle}>CUIT</th>
+                <th style={thStyle}>Provincia</th>
                 <th style={thStyle}>Localidad</th>
                 {isAdmin && <th style={thStyle}>Estado</th>}
                 {isAdminCliente && NIVELES_ATENCION.map(([val, label]) => <th key={val} style={{ ...thStyle, textAlign: "center" }}>{label}</th>)}
@@ -2852,6 +2910,7 @@ function PrestadoresView({ perfil }) {
                   >
                     <td style={{ ...tdStyle, fontWeight: 500 }}>{p.nombre}</td>
                     <td style={tdStyle}>{p.cuit || "—"}</td>
+                    <td style={tdStyle}>{p.provincia || "—"}</td>
                     <td style={tdStyle}>{p.localidad || "—"}</td>
                     {isAdmin && (
                       <td style={tdStyle}>
