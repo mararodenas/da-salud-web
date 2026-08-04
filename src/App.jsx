@@ -1907,7 +1907,8 @@ function splitPipe(text) {
 }
 
 function parsePrestadoresCsv(text) {
-  const lines = text.split(/\r?\n/).filter((l) => l.trim().length > 0);
+  const clean = text.replace(/^\uFEFF/, "");
+  const lines = clean.split(/\r?\n/).filter((l) => l.trim().length > 0);
   if (lines.length < 2) return [];
   const headers = splitCsvLine(lines[0]).map((h) => h.toLowerCase().trim());
   return lines.slice(1).map((line) => {
@@ -1916,6 +1917,44 @@ function parsePrestadoresCsv(text) {
     headers.forEach((h, i) => { obj[h] = values[i] || ""; });
     return obj;
   });
+}
+
+// El REFES (Registro Federal de Establecimientos de Salud, Ministerio de Salud) usa estos
+// nombres de columna — los mapeamos a los nuestros para poder subir el archivo tal cual se
+// descarga, sin tener que renombrar nada a mano.
+const PRESTADOR_HEADER_ALIASES = {
+  razon_social: "razon_social",
+  nombre: "nombre",
+  cuit: "cuit",
+  domicilio: "domicilio",
+  te1: "telefono", telefono: "telefono",
+  mail1: "email", email: "email",
+  provincia: "provincia",
+  partido: "partido", departamento: "partido",
+  localidad: "localidad",
+  niveles_atencion: "niveles_atencion",
+};
+
+function normalizarFilaPrestador(fila) {
+  const out = {};
+  Object.entries(fila).forEach(([k, v]) => {
+    const key = PRESTADOR_HEADER_ALIASES[k] || k;
+    if (!out[key]) out[key] = v;
+  });
+  return out;
+}
+
+// El REFES no trae Partido/Departamento, solo Provincia y Localidad — lo resolvemos
+// con la misma API oficial (Georef) que ya usamos para el resto del sistema.
+async function resolverPartidoPorLocalidad(provinciaNombre, localidadNombre) {
+  try {
+    const qs = new URLSearchParams({ provincia: provinciaNombre, nombre: localidadNombre, campos: "departamento", max: 1 }).toString();
+    const res = await fetch(`${GEOREF_BASE}/localidades?${qs}`);
+    const data = await res.json();
+    return data?.localidades?.[0]?.departamento?.nombre || "";
+  } catch {
+    return "";
+  }
 }
 
 function PrestadoresView({ perfil }) {
@@ -2145,17 +2184,33 @@ function PrestadoresView({ perfil }) {
 
   const subirMasivo = async () => {
     if (!bulkFile) return;
-    setBulkLoading(true); setBulkStatus("");
+    setBulkLoading(true); setBulkStatus("Leyendo archivo...");
     try {
       const text = await bulkFile.text();
-      const filas = parsePrestadoresCsv(text);
+      const filas = parsePrestadoresCsv(text).map(normalizarFilaPrestador);
       if (filas.length === 0) { setBulkStatus("El archivo no tiene filas para cargar."); setBulkLoading(false); return; }
+
+      const pendientes = filas.filter((f) => f.provincia && f.localidad && !f.partido);
+      const cache = {};
+      const totalUnicas = new Set(pendientes.map((f) => `${f.provincia}|${f.localidad}`.toLowerCase())).size;
+      let hechas = 0;
+      for (const f of pendientes) {
+        const cacheKey = `${f.provincia}|${f.localidad}`.toLowerCase();
+        if (!(cacheKey in cache)) {
+          hechas++;
+          setBulkStatus(`Resolviendo partido por localidad... (${hechas}/${totalUnicas})`);
+          cache[cacheKey] = await resolverPartidoPorLocalidad(f.provincia, f.localidad);
+        }
+        f.partido = cache[cacheKey];
+      }
+
       const payload = filas.map((f) => ({
         razon_social: f.razon_social || null, nombre: f.nombre || f.razon_social || "", cuit: f.cuit || null,
         telefono: f.telefono || null, email: f.email || null, domicilio: f.domicilio || null,
         provincia: f.provincia || null, partido: f.partido || null, localidad: f.localidad || null,
         niveles_atencion: splitPipe(f.niveles_atencion), activo: true,
       }));
+      setBulkStatus("Guardando...");
       const { error } = await supabase.from("prestadores").insert(payload);
       setBulkLoading(false);
       if (error) { setBulkStatus("Error: " + error.message); return; }
@@ -2302,6 +2357,8 @@ function PrestadoresView({ perfil }) {
             <span style={{ fontFamily: "var(--font-mono)", fontSize: 11.5 }}>
               razon_social, nombre, cuit, telefono, email, domicilio, provincia, partido, localidad, niveles_atencion
             </span>. Para "niveles_atencion", separá varios con una barra, ej. <span style={{ fontFamily: "var(--font-mono)", fontSize: 11.5 }}>1|2|3</span>.
+            <br /><br />
+            <strong>También podés subir directo el CSV del REFES</strong> (Registro Federal de Establecimientos de Salud, Ministerio de Salud) sin renombrar columnas — reconoce <span style={{ fontFamily: "var(--font-mono)", fontSize: 11.5 }}>RAZON_SOCIAL, NOMBRE, CUIT, DOMICILIO, TE1, MAIL1, PROVINCIA, LOCALIDAD</span>. Como el REFES no trae Partido/Departamento, el sistema lo resuelve solo consultando la API oficial por cada localidad (puede tardar un poco con archivos grandes).
           </p>
           <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
             <input type="file" accept=".csv,text/csv" onChange={(e) => setBulkFile(e.target.files?.[0] || null)} style={{ fontSize: 12.5, fontFamily: "var(--font-body)" }} />
@@ -2309,7 +2366,11 @@ function PrestadoresView({ perfil }) {
               {bulkLoading ? "Subiendo..." : "Subir archivo"}
             </button>
           </div>
-          {bulkStatus && <div style={{ marginTop: 10, fontSize: 12.5, color: bulkStatus.startsWith("Error") || bulkStatus.startsWith("No se") ? "#A13333" : "#27500A" }}>{bulkStatus}</div>}
+          {bulkStatus && (
+            <div style={{ marginTop: 10, fontSize: 12.5, color: bulkLoading ? "var(--muted)" : (bulkStatus.startsWith("Error") || bulkStatus.startsWith("No se") ? "#A13333" : "#27500A") }}>
+              {bulkStatus}
+            </div>
+          )}
         </div>
       )}
 
