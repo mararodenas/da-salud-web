@@ -3,7 +3,7 @@ import * as XLSX from "xlsx";
 import {
   ClipboardList, Plus, LogOut, Users, AlertTriangle,
   Clock, Search, Inbox, Paperclip, FileText, Building2, ShieldCheck,
-  ChevronDown, ChevronRight, BedDouble, Receipt, Ambulance, BarChart3, Upload, X, Stethoscope,
+  ChevronDown, ChevronRight, BedDouble, Receipt, Ambulance, BarChart3, Upload, X, Stethoscope, Menu,
 } from "lucide-react";
 import { supabase } from "./supabaseClient";
 import {
@@ -3115,31 +3115,78 @@ function allowedViewsFor(perfil) {
 function Sidebar({ perfil, view, setView }) {
   const groups = buildNavGroups(perfil);
 
-  const [collapsed, setCollapsed] = useState(() => {
+  // Arranca siempre plegado (solo íconos) al abrir el sistema — no se guarda entre sesiones a propósito.
+  const [railCollapsed, setRailCollapsed] = useState(true);
+
+  const [collapsedGroups, setCollapsedGroups] = useState(() => {
     try { return JSON.parse(localStorage.getItem("da_salud_nav_collapsed") || "{}"); } catch { return {}; }
   });
   const toggleGroup = (key) => {
-    setCollapsed((prev) => {
+    setCollapsedGroups((prev) => {
       const next = { ...prev, [key]: !prev[key] };
       try { localStorage.setItem("da_salud_nav_collapsed", JSON.stringify(next)); } catch { /* ignore */ }
       return next;
     });
   };
 
+  const width = railCollapsed ? 68 : SIDEBAR_WIDTH;
+
   return (
     <aside style={{
-      width: SIDEBAR_WIDTH, flex: `0 0 ${SIDEBAR_WIDTH}px`, minHeight: "100vh",
+      width, flex: `0 0 ${width}px`, minHeight: "100vh",
       background: "var(--surface)", borderRight: "1px solid var(--border)",
-      display: "flex", flexDirection: "column", padding: "20px 12px",
+      display: "flex", flexDirection: "column", padding: railCollapsed ? "20px 10px" : "20px 12px",
+      transition: "width 0.12s ease",
     }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "0 8px 22px" }}>
-        <img src="/logo.png" alt="DA Salud" style={{ height: 30, width: "auto" }} />
-        <div style={{ fontFamily: "var(--font-display)", fontWeight: 600, fontSize: 16, color: "var(--ink)" }}>DA Salud</div>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: railCollapsed ? "center" : "space-between", gap: 8, padding: railCollapsed ? "0 0 20px" : "0 8px 22px" }}>
+        {!railCollapsed && (
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <img src="/logo.png" alt="DA Salud" style={{ height: 30, width: "auto" }} />
+            <div style={{ fontFamily: "var(--font-display)", fontWeight: 600, fontSize: 16, color: "var(--ink)" }}>DA Salud</div>
+          </div>
+        )}
+        <button
+          onClick={() => setRailCollapsed((v) => !v)}
+          title={railCollapsed ? "Expandir menú" : "Plegar menú"}
+          style={{ border: "none", background: "transparent", cursor: "pointer", color: "var(--muted)", display: "flex", padding: 6, borderRadius: 6 }}
+        >
+          <Menu size={18} />
+        </button>
       </div>
 
-      <nav style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-        {groups.map((g) => {
-          const isCollapsed = !!collapsed[g.key];
+      <nav style={{ display: "flex", flexDirection: "column", gap: railCollapsed ? 6 : 4 }}>
+        {groups.map((g, gi) => {
+          const isGroupCollapsed = !!collapsedGroups[g.key];
+
+          if (railCollapsed) {
+            const flatItems = g.items.flatMap((item) => [item, ...(item.children || [])]);
+            return (
+              <div key={g.key} style={{
+                display: "flex", flexDirection: "column", gap: 4, alignItems: "center",
+                paddingTop: gi > 0 ? 10 : 0, marginTop: gi > 0 ? 4 : 0,
+                borderTop: gi > 0 ? "1px solid var(--border)" : "none",
+              }}>
+                {flatItems.map((item) => {
+                  const Icon = item.icon;
+                  const active = view === item.view;
+                  return (
+                    <button
+                      key={item.key} onClick={() => setView(item.view)} title={item.label}
+                      style={{
+                        display: "flex", alignItems: "center", justifyContent: "center", width: 40, height: 40, borderRadius: 8,
+                        border: "none", cursor: "pointer",
+                        background: active ? "var(--primary-tint)" : "transparent",
+                        color: active ? "var(--primary-dark)" : "var(--ink)",
+                      }}
+                    >
+                      <Icon size={18} />
+                    </button>
+                  );
+                })}
+              </div>
+            );
+          }
+
           return (
             <div key={g.key} style={{ marginBottom: 4 }}>
               <button
@@ -3152,9 +3199,9 @@ function Sidebar({ perfil, view, setView }) {
                 }}
               >
                 {g.label}
-                {isCollapsed ? <ChevronRight size={13} /> : <ChevronDown size={13} />}
+                {isGroupCollapsed ? <ChevronRight size={13} /> : <ChevronDown size={13} />}
               </button>
-              {!isCollapsed && (
+              {!isGroupCollapsed && (
                 <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
                   {g.items.map((item) => {
                     const { key, label, icon: Icon, view: itemView, children } = item;
