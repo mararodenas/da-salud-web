@@ -1252,6 +1252,69 @@ function Pill({ children, bg, fg }) {
   return <span style={{ display: "inline-flex", alignItems: "center", padding: "3px 10px", borderRadius: 20, fontSize: 12, fontWeight: 500, background: bg, color: fg, whiteSpace: "nowrap" }}>{children}</span>;
 }
 
+// Desplegable con buscador adentro: mantiene el aspecto de un <select> normal (flechita,
+// se abre/cierra), pero al abrirlo aparece un campo de texto que filtra las opciones a
+// medida que se escribe. Pensado para listas que hoy son cortas pero pueden crecer mucho.
+function SearchableSelect({ value, onChange, options, placeholder, getLabel = (o) => o.nombre, getValue = (o) => o.id, emptyLabel }) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const ref = useRef(null);
+
+  useEffect(() => {
+    const onClickOutside = (e) => { if (ref.current && !ref.current.contains(e.target)) { setOpen(false); setQuery(""); } };
+    document.addEventListener("mousedown", onClickOutside);
+    return () => document.removeEventListener("mousedown", onClickOutside);
+  }, []);
+
+  const selected = options.find((o) => getValue(o) === value);
+  const q = query.trim().toLowerCase();
+  const filtradas = !q ? options : options.filter((o) => getLabel(o).toLowerCase().includes(q));
+
+  return (
+    <div ref={ref} style={{ position: "relative" }}>
+      <div
+        onClick={() => setOpen((v) => !v)}
+        style={{ ...inputStyle, display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "pointer", userSelect: "none" }}
+      >
+        <span style={{ color: selected ? "var(--ink)" : "var(--muted)" }}>{selected ? getLabel(selected) : placeholder}</span>
+        <ChevronDown size={14} color="var(--muted)" />
+      </div>
+      {open && (
+        <div style={{ position: "absolute", top: "calc(100% + 4px)", left: 0, right: 0, background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 10, boxShadow: "0 8px 22px rgba(15,37,71,0.14)", zIndex: 60, maxHeight: 300, display: "flex", flexDirection: "column" }}>
+          <div style={{ padding: 8, borderBottom: "1px solid var(--border)" }}>
+            <input
+              autoFocus value={query} onChange={(e) => setQuery(e.target.value)}
+              placeholder="Escribí para buscar..." style={{ ...inputStyle, fontSize: 13, padding: "8px 10px" }}
+            />
+          </div>
+          <div style={{ overflowY: "auto" }}>
+            <div
+              onClick={() => { onChange(""); setOpen(false); setQuery(""); }}
+              style={{ padding: "9px 12px", cursor: "pointer", fontSize: 13, color: "var(--muted)" }}
+              onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg)"; }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
+            >
+              {emptyLabel || placeholder}
+            </div>
+            {filtradas.map((o) => (
+              <div
+                key={getValue(o)}
+                onClick={() => { onChange(getValue(o)); setOpen(false); setQuery(""); }}
+                style={{ padding: "9px 12px", cursor: "pointer", fontSize: 13, background: getValue(o) === value ? "var(--primary-tint)" : "transparent", color: getValue(o) === value ? "var(--primary-dark)" : "var(--ink)" }}
+                onMouseEnter={(e) => { if (getValue(o) !== value) e.currentTarget.style.background = "var(--bg)"; }}
+                onMouseLeave={(e) => { if (getValue(o) !== value) e.currentTarget.style.background = "transparent"; }}
+              >
+                {getLabel(o)}
+              </div>
+            ))}
+            {filtradas.length === 0 && <div style={{ padding: "9px 12px", fontSize: 12.5, color: "var(--muted)" }}>Sin resultados</div>}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function EmptyState({ icon: Icon, text }) {
   return (
     <div style={{ textAlign: "center", padding: "50px 20px", color: "var(--muted)", border: "1px dashed var(--border-strong)", borderRadius: 14 }}>
@@ -3084,10 +3147,9 @@ function ReglasView({ perfil }) {
       {isAdminGeneral && (
         <>
           <label style={labelStyle}>Cliente</label>
-          <select value={clienteId} onChange={(e) => setClienteId(e.target.value)} style={{ ...inputStyle, marginBottom: 20 }}>
-            <option value="">Seleccionar cliente...</option>
-            {clientes.map((c) => <option key={c.id} value={c.id}>{c.nombre}</option>)}
-          </select>
+          <div style={{ marginBottom: 20 }}>
+            <SearchableSelect value={clienteId} onChange={setClienteId} options={clientes} placeholder="Seleccionar cliente..." />
+          </div>
         </>
       )}
 
