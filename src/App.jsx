@@ -2137,7 +2137,7 @@ function PrestadoresView({ perfil }) {
     (p.nombre || "").toLowerCase().includes(q) || (p.cuit || "").toLowerCase().includes(q) || (p.razon_social || "").toLowerCase().includes(q)
     || (p.provincia || "").toLowerCase().includes(q) || (p.partido || "").toLowerCase().includes(q) || (p.localidad || "").toLowerCase().includes(q)
   );
-  const LIMITE_TABLA = 300;
+  const LIMITE_TABLA = 30;
   const totalPaginas = Math.max(1, Math.ceil(coincidencias.length / LIMITE_TABLA));
   const paginaActual = Math.min(pagina, totalPaginas - 1);
   const filtrados = coincidencias.slice(paginaActual * LIMITE_TABLA, (paginaActual + 1) * LIMITE_TABLA);
@@ -3048,17 +3048,37 @@ function PrestadoresView({ perfil }) {
               })}
             </tbody>
           </table>
-          {!loading && totalPaginas > 1 && (
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 14, padding: "16px 0" }}>
-              <button onClick={() => setPagina((p) => Math.max(0, p - 1))} disabled={paginaActual === 0} style={{ padding: "6px 14px", borderRadius: 8, border: "1px solid var(--border)", background: paginaActual === 0 ? "var(--bg)" : "var(--surface)", cursor: paginaActual === 0 ? "default" : "pointer", fontSize: 12.5, color: paginaActual === 0 ? "var(--muted)" : "var(--ink)", fontFamily: "var(--font-body)" }}>
-                ← Anterior
+          {!loading && totalPaginas > 1 && (() => {
+            const actual1 = paginaActual + 1;
+            const delta = 2;
+            const nums = [];
+            for (let i = 1; i <= totalPaginas; i++) {
+              if (i === 1 || i === totalPaginas || (i >= actual1 - delta && i <= actual1 + delta)) nums.push(i);
+            }
+            const conPuntos = [];
+            let anterior = null;
+            nums.forEach((n) => {
+              if (anterior != null && n - anterior > 1) conPuntos.push("...");
+              conPuntos.push(n);
+              anterior = n;
+            });
+            const btnPagina = (n, activo) => (
+              <button key={n} onClick={() => setPagina(n - 1)} style={{ minWidth: 30, padding: "6px 8px", borderRadius: 8, border: "1px solid var(--border)", background: activo ? "var(--primary-dark)" : "var(--surface)", cursor: "pointer", fontSize: 12.5, fontWeight: activo ? 600 : 400, color: activo ? "#fff" : "var(--ink)", fontFamily: "var(--font-body)" }}>
+                {n}
               </button>
-              <span style={{ fontSize: 12.5, color: "var(--muted)" }}>Página {paginaActual + 1} de {totalPaginas}</span>
-              <button onClick={() => setPagina((p) => Math.min(totalPaginas - 1, p + 1))} disabled={paginaActual >= totalPaginas - 1} style={{ padding: "6px 14px", borderRadius: 8, border: "1px solid var(--border)", background: paginaActual >= totalPaginas - 1 ? "var(--bg)" : "var(--surface)", cursor: paginaActual >= totalPaginas - 1 ? "default" : "pointer", fontSize: 12.5, color: paginaActual >= totalPaginas - 1 ? "var(--muted)" : "var(--ink)", fontFamily: "var(--font-body)" }}>
-                Siguiente →
-              </button>
-            </div>
-          )}
+            );
+            return (
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: "16px 0", flexWrap: "wrap" }}>
+                <button onClick={() => setPagina((p) => Math.max(0, p - 1))} disabled={paginaActual === 0} style={{ padding: "6px 14px", borderRadius: 8, border: "1px solid var(--border)", background: paginaActual === 0 ? "var(--bg)" : "var(--surface)", cursor: paginaActual === 0 ? "default" : "pointer", fontSize: 12.5, color: paginaActual === 0 ? "var(--muted)" : "var(--ink)", fontFamily: "var(--font-body)" }}>
+                  ← Anterior
+                </button>
+                {conPuntos.map((n, i) => n === "..." ? <span key={`dots-${i}`} style={{ padding: "0 4px", color: "var(--muted)", fontSize: 12.5 }}>…</span> : btnPagina(n, n === actual1))}
+                <button onClick={() => setPagina((p) => Math.min(totalPaginas - 1, p + 1))} disabled={paginaActual >= totalPaginas - 1} style={{ padding: "6px 14px", borderRadius: 8, border: "1px solid var(--border)", background: paginaActual >= totalPaginas - 1 ? "var(--bg)" : "var(--surface)", cursor: paginaActual >= totalPaginas - 1 ? "default" : "pointer", fontSize: 12.5, color: paginaActual >= totalPaginas - 1 ? "var(--muted)" : "var(--ink)", fontFamily: "var(--font-body)" }}>
+                  Siguiente →
+                </button>
+              </div>
+            );
+          })()}
         </div>
       )}
     </div>
