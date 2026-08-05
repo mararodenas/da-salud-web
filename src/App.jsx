@@ -2200,6 +2200,19 @@ function PrestadoresView({ perfil }) {
     load();
   };
 
+  // Pausar/reactivar directo, sin pasar por "Guardar cambios" — no borra nada,
+  // solo bloquea que el prestador cargue casos nuevos (ver banner de "Cuenta pausada").
+  const togglePausaPrestador = async () => {
+    if (!editingId) return;
+    const nuevoEstado = !form.activo;
+    setSaving(true); setFormError("");
+    const { error } = await supabase.from("prestadores").update({ activo: nuevoEstado }).eq("id", editingId);
+    setSaving(false);
+    if (error) { setFormError(error.message); return; }
+    setForm((f) => ({ ...f, activo: nuevoEstado }));
+    setPrestadores((prev) => prev.map((p) => (p.id === editingId ? { ...p, activo: nuevoEstado } : p)));
+  };
+
   // Administrador: tilda/destilda qué financiadores trabajan con el prestador que está editando
   const toggleFinanciador = async (clienteId) => {
     if (!editingId) return;
@@ -2670,6 +2683,11 @@ function PrestadoresView({ perfil }) {
               <button onClick={guardarPrestador} disabled={!form.nombre.trim() || saving} style={btnPrimary(!!form.nombre.trim())}>
                 {saving ? "Guardando..." : editingId ? "Guardar cambios" : "Crear prestador"}
               </button>
+              {editingId && (
+                <button onClick={togglePausaPrestador} disabled={saving} style={{ padding: "11px 16px", borderRadius: 9, border: "1px solid var(--border)", background: "transparent", cursor: "pointer", fontSize: 13.5, fontFamily: "var(--font-body)", color: form.activo ? "#791F1F" : "#27500A" }}>
+                  {form.activo ? "Pausar" : "Reactivar"}
+                </button>
+              )}
               {editingId && (
                 <button onClick={eliminarPrestador} disabled={saving} style={{ padding: "11px 16px", borderRadius: 9, border: "1px solid #E3B8B8", background: "transparent", cursor: "pointer", fontSize: 13.5, fontFamily: "var(--font-body)", color: "#A13333" }}>
                   Eliminar prestador
