@@ -1964,6 +1964,7 @@ function PrestadoresView({ perfil }) {
   const [prestadores, setPrestadores] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
+  const [pagina, setPagina] = useState(0);
 
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState(null);
@@ -2074,7 +2075,11 @@ function PrestadoresView({ perfil }) {
     || (p.provincia || "").toLowerCase().includes(q) || (p.partido || "").toLowerCase().includes(q) || (p.localidad || "").toLowerCase().includes(q)
   );
   const LIMITE_TABLA = 300;
-  const filtrados = coincidencias.slice(0, LIMITE_TABLA);
+  const totalPaginas = Math.max(1, Math.ceil(coincidencias.length / LIMITE_TABLA));
+  const paginaActual = Math.min(pagina, totalPaginas - 1);
+  const filtrados = coincidencias.slice(paginaActual * LIMITE_TABLA, (paginaActual + 1) * LIMITE_TABLA);
+
+  useEffect(() => { setPagina(0); }, [search]);
 
   const openNew = () => {
     setEditingId(null); setForm(emptyPrestadorForm()); setFormError("");
@@ -2423,7 +2428,7 @@ function PrestadoresView({ perfil }) {
         {loading
           ? "Cargando prestadores..."
           : coincidencias.length > LIMITE_TABLA
-            ? `Mostrando ${LIMITE_TABLA} de ${coincidencias.length.toLocaleString("es-AR")} resultados — seguí escribiendo para acotar la búsqueda.`
+            ? `${coincidencias.length.toLocaleString("es-AR")} resultados — página ${paginaActual + 1} de ${totalPaginas}.`
             : `${coincidencias.length.toLocaleString("es-AR")} prestador${coincidencias.length === 1 ? "" : "es"}${prestadores.length !== coincidencias.length ? ` de ${prestadores.length.toLocaleString("es-AR")} en total` : ""}.`}
       </div>
 
@@ -2980,6 +2985,17 @@ function PrestadoresView({ perfil }) {
               })}
             </tbody>
           </table>
+          {!loading && totalPaginas > 1 && (
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 14, padding: "16px 0" }}>
+              <button onClick={() => setPagina((p) => Math.max(0, p - 1))} disabled={paginaActual === 0} style={{ padding: "6px 14px", borderRadius: 8, border: "1px solid var(--border)", background: paginaActual === 0 ? "var(--bg)" : "var(--surface)", cursor: paginaActual === 0 ? "default" : "pointer", fontSize: 12.5, color: paginaActual === 0 ? "var(--muted)" : "var(--ink)", fontFamily: "var(--font-body)" }}>
+                ← Anterior
+              </button>
+              <span style={{ fontSize: 12.5, color: "var(--muted)" }}>Página {paginaActual + 1} de {totalPaginas}</span>
+              <button onClick={() => setPagina((p) => Math.min(totalPaginas - 1, p + 1))} disabled={paginaActual >= totalPaginas - 1} style={{ padding: "6px 14px", borderRadius: 8, border: "1px solid var(--border)", background: paginaActual >= totalPaginas - 1 ? "var(--bg)" : "var(--surface)", cursor: paginaActual >= totalPaginas - 1 ? "default" : "pointer", fontSize: 12.5, color: paginaActual >= totalPaginas - 1 ? "var(--muted)" : "var(--ink)", fontFamily: "var(--font-body)" }}>
+                Siguiente →
+              </button>
+            </div>
+          )}
         </div>
       )}
     </div>
