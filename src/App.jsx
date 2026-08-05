@@ -2009,12 +2009,22 @@ function PrestadoresView({ perfil }) {
   const [vinculoSaving, setVinculoSaving] = useState(false);
   const [vinculoError, setVinculoError] = useState("");
 
-  const load = () => {
+  const load = async () => {
     setLoading(true);
-    supabase.from("prestadores").select("*").order("nombre")
-      .then(({ data, error }) => { if (error) setFormError(error.message); else setPrestadores(data || []); setLoading(false); });
+    let all = [];
+    let from = 0;
+    const PAGE = 1000;
+    while (true) {
+      const { data, error } = await supabase.from("prestadores").select("*").order("nombre").range(from, from + PAGE - 1);
+      if (error) { setFormError(error.message); break; }
+      all = all.concat(data || []);
+      if (!data || data.length < PAGE) break;
+      from += PAGE;
+    }
+    setPrestadores(all);
+    setLoading(false);
   };
-  useEffect(load, []);
+  useEffect(() => { load(); }, []);
 
   useEffect(() => {
     if (!isAdmin) return;
@@ -2059,10 +2069,12 @@ function PrestadoresView({ perfil }) {
   };
 
   const q = search.trim().toLowerCase();
-  const filtrados = !q ? prestadores : prestadores.filter((p) =>
+  const coincidencias = !q ? prestadores : prestadores.filter((p) =>
     (p.nombre || "").toLowerCase().includes(q) || (p.cuit || "").toLowerCase().includes(q) || (p.razon_social || "").toLowerCase().includes(q)
     || (p.provincia || "").toLowerCase().includes(q) || (p.partido || "").toLowerCase().includes(q) || (p.localidad || "").toLowerCase().includes(q)
   );
+  const LIMITE_TABLA = 300;
+  const filtrados = coincidencias.slice(0, LIMITE_TABLA);
 
   const openNew = () => {
     setEditingId(null); setForm(emptyPrestadorForm()); setFormError("");
@@ -2393,6 +2405,14 @@ function PrestadoresView({ perfil }) {
       </div>
 
       {linkError && <div style={{ marginBottom: 12, fontSize: 12.5, color: "#A13333", background: "#FBE7E7", padding: "8px 10px", borderRadius: 8 }}>{linkError}</div>}
+
+      <div style={{ marginBottom: 10, fontSize: 12, color: "var(--muted)" }}>
+        {loading
+          ? "Cargando prestadores..."
+          : coincidencias.length > LIMITE_TABLA
+            ? `Mostrando ${LIMITE_TABLA} de ${coincidencias.length.toLocaleString("es-AR")} resultados — seguí escribiendo para acotar la búsqueda.`
+            : `${coincidencias.length.toLocaleString("es-AR")} prestador${coincidencias.length === 1 ? "" : "es"}${prestadores.length !== coincidencias.length ? ` de ${prestadores.length.toLocaleString("es-AR")} en total` : ""}.`}
+      </div>
 
       {isAdmin && showBulk && (
         <div style={{ ...cardStyle, padding: 18, marginBottom: 20 }}>
@@ -2903,9 +2923,9 @@ function PrestadoresView({ perfil }) {
                 return (
                   <tr
                     key={p.id}
-                    onClick={() => { if (isAdmin) openEdit(p); }}
-                    style={{ cursor: isAdmin ? "pointer" : "default" }}
-                    onMouseEnter={(e) => { if (isAdmin) e.currentTarget.style.background = "var(--bg)"; }}
+                    onClick={() => { if (isAdmin) openEdit(p); else if (isAdminCliente) abrirVinculo(p); }}
+                    style={{ cursor: (isAdmin || isAdminCliente) ? "pointer" : "default" }}
+                    onMouseEnter={(e) => { if (isAdmin || isAdminCliente) e.currentTarget.style.background = "var(--bg)"; }}
                     onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
                   >
                     <td style={{ ...tdStyle, fontWeight: 500 }}>{p.nombre}</td>
@@ -2918,7 +2938,7 @@ function PrestadoresView({ perfil }) {
                       </td>
                     )}
                     {isAdminCliente && NIVELES_ATENCION.map(([val]) => (
-                      <td key={val} style={{ ...tdStyle, textAlign: "center" }}>
+                      <td key={val} style={{ ...tdStyle, textAlign: "center" }} onClick={(e) => e.stopPropagation()}>
                         <input
                           type="checkbox" checked={niveles.includes(val)} disabled={!ofrece(val)}
                           onChange={() => toggleNivelInline(p, val)}
@@ -2927,17 +2947,14 @@ function PrestadoresView({ perfil }) {
                       </td>
                     ))}
                     {isAdminCliente && (
-                      <td style={tdStyle}>
-                        {!linkedIds.has(p.id) ? (
-                          <span style={{ fontSize: 12, color: "var(--muted)" }}>—</span>
-                        ) : (
-                          <button onClick={() => abrirVinculo(p)} style={{ display: "flex", alignItems: "center", gap: 5, border: "none", background: "transparent", cursor: "pointer", fontSize: 12.5, color: (contrato?.activo ?? true) ? "var(--primary-dark)" : "#A13333", fontFamily: "var(--font-body)", padding: 0 }}>
-                            {(contrato?.activo ?? true) ? (contrato?.contrato_ruta ? <FileText size={13} /> : <Paperclip size={13} />) : <AlertTriangle size={13} />}
-                            {(contrato?.activo ?? true)
-                              ? ((contrato?.prestaciones_contratadas || []).length > 0 ? `${contrato.prestaciones_contratadas.length} prestaciones` : "Prestaciones y convenio")
-                              : "Pausado"}
-                          </button>
-                        )}
+                      <td style={tdStyle} onClick={(e) => e.stopPropagation()}>
+                        <button onClick={() => abrirVinculo(p)} style={{ display: "flex", alignItems: "center", gap: 5, border: "none", background: "transparent", cursor: "pointer", fontSize: 12.5, color: !linkedIds.has(p.id) ? "var(--muted)" : ((contrato?.activo ?? true) ? "var(--primary-dark)" : "#A13333"), fontFamily: "var(--font-body)", padding: 0 }}>
+                          {!linkedIds.has(p.id)
+                            ? <><Paperclip size={13} /> Ver / vincular</>
+                            : (contrato?.activo ?? true)
+                              ? <>{contrato?.contrato_ruta ? <FileText size={13} /> : <Paperclip size={13} />} {(contrato?.prestaciones_contratadas || []).length > 0 ? `${contrato.prestaciones_contratadas.length} prestaciones` : "Prestaciones y convenio"}</>
+                              : <><AlertTriangle size={13} /> Pausado</>}
+                        </button>
                       </td>
                     )}
                   </tr>
