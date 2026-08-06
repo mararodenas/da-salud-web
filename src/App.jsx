@@ -1820,10 +1820,11 @@ function CategoryExplorerModal({ onClose, onAdd }) {
   const visibleRoots = !q ? roots : roots.filter((r) => leafDescendants(r.id, tree.byParent).some((id) => tree.byId[id].nombre.toLowerCase().includes(q)));
 
   const agregar = () => {
+    const ahora = new Date().toISOString();
     const items = [...selected].map((id) => {
       const item = tree.byId[id];
       const parent = item?.parent_id ? tree.byId[item.parent_id] : null;
-      return { id, nombre: item?.nombre || "", tipo, grupo: parent?.nombre || "", codigo: "" };
+      return { id, nombre: item?.nombre || "", tipo, grupo: parent?.nombre || "", codigo: "", agregado_en: ahora };
     });
     onAdd(items);
     onClose();
@@ -2072,6 +2073,7 @@ function PrestadoresView({ perfil }) {
   const [vinculoPrestacionQuery, setVinculoPrestacionQuery] = useState("");
   const [vinculoSaving, setVinculoSaving] = useState(false);
   const [vinculoError, setVinculoError] = useState("");
+  const [vinculoRevisadoAnterior, setVinculoRevisadoAnterior] = useState(null); // fecha de la última revisión, ANTES de abrir este detalle — para saber qué marcar "Nuevo"
 
   const load = async () => {
     setLoading(true);
@@ -2097,13 +2099,13 @@ function PrestadoresView({ perfil }) {
 
   useEffect(() => {
     if (!isAdminCliente) return;
-    supabase.from("prestador_clientes").select("prestador_id, niveles_contratados, cupo_camas, cantidad_camas, contrato_ruta, prestaciones_contratadas, activo").eq("cliente_id", perfil.cliente_id)
+    supabase.from("prestador_clientes").select("prestador_id, niveles_contratados, cupo_camas, cantidad_camas, contrato_ruta, prestaciones_contratadas, activo, prestaciones_revisado_en").eq("cliente_id", perfil.cliente_id)
       .then(({ data }) => {
         const ids = new Set();
         const map = {};
         (data || []).forEach((r) => {
           ids.add(r.prestador_id);
-          map[r.prestador_id] = { niveles_contratados: r.niveles_contratados || [], cupo_camas: r.cupo_camas, cantidad_camas: r.cantidad_camas, contrato_ruta: r.contrato_ruta, prestaciones_contratadas: r.prestaciones_contratadas || [], activo: r.activo };
+          map[r.prestador_id] = { niveles_contratados: r.niveles_contratados || [], cupo_camas: r.cupo_camas, cantidad_camas: r.cantidad_camas, contrato_ruta: r.contrato_ruta, prestaciones_contratadas: r.prestaciones_contratadas || [], activo: r.activo, prestaciones_revisado_en: r.prestaciones_revisado_en };
         });
         setLinkedIds(ids);
         setContratos(map);
@@ -2179,7 +2181,7 @@ function PrestadoresView({ perfil }) {
   const agregarPrestacionOfrecida = (pr) => {
     setForm((f) => {
       if (f.prestaciones_ofrecidas.some((x) => x.id === pr.id)) return f;
-      return { ...f, prestaciones_ofrecidas: [...f.prestaciones_ofrecidas, { ...pr, codigo: "" }] };
+      return { ...f, prestaciones_ofrecidas: [...f.prestaciones_ofrecidas, { ...pr, codigo: "", agregado_en: new Date().toISOString() }] };
     });
     setPrestacionQuery(""); setPrestacionResultados([]);
   };
@@ -2214,10 +2216,11 @@ function PrestadoresView({ perfil }) {
         setPrestacionesBulkLoading(false);
         return;
       }
+      const ahora = new Date().toISOString();
       setForm((f) => {
         const yaIds = new Set(f.prestaciones_ofrecidas.map((x) => x.id));
         const nuevas = marcadas.filter((fl) => !yaIds.has(fl.id)).map((fl) => ({
-          id: fl.id, nombre: fl.nombre || "", tipo: fl.tipo || "", grupo: fl.grupo || "", codigo: String(fl.codigo || ""),
+          id: fl.id, nombre: fl.nombre || "", tipo: fl.tipo || "", grupo: fl.grupo || "", codigo: String(fl.codigo || ""), agregado_en: ahora,
         }));
         return { ...f, prestaciones_ofrecidas: [...f.prestaciones_ofrecidas, ...nuevas] };
       });
@@ -2350,6 +2353,14 @@ function PrestadoresView({ perfil }) {
     setContactoError(""); setContactoGuardado(false);
     setVinculoPrestacionQuery("");
     setConvenioError(""); setVinculoError("");
+    // "Nuevo" se calcula contra la última revisión ANTES de esta apertura — guardamos ese valor
+    // y recién después actualizamos la fecha de revisión, para no perder el badge de esta visita.
+    setVinculoRevisadoAnterior(actual?.prestaciones_revisado_en || null);
+    if (linkedIds.has(p.id)) {
+      const ahora = new Date().toISOString();
+      supabase.from("prestador_clientes").update({ prestaciones_revisado_en: ahora }).eq("prestador_id", p.id).eq("cliente_id", perfil.cliente_id)
+        .then(() => setContratos((prev) => ({ ...prev, [p.id]: { ...prev[p.id], prestaciones_revisado_en: ahora } })));
+    }
   };
   const guardarContacto = async () => {
     if (!editingVinculo) return;
@@ -2932,12 +2943,20 @@ function PrestadoresView({ perfil }) {
                             {tipo} ({items.length})
                           </label>
                           <div style={{ display: "flex", flexDirection: "column", gap: 6, paddingLeft: 22 }}>
-                            {items.map((pr) => (
-                              <label key={pr.id} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "var(--ink)", cursor: "pointer" }}>
-                                <input type="checkbox" checked={contratadasIds.has(pr.id)} onChange={() => toggleprestacionContratada(pr)} />
-                                {pr.nombre}
-                              </label>
-                            ))}
+                            {items.map((pr) => {
+                              const esNueva = pr.agregado_en && (!vinculoRevisadoAnterior || new Date(pr.agregado_en) > new Date(vinculoRevisadoAnterior));
+                              return (
+                                <label key={pr.id} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "var(--ink)", cursor: "pointer" }}>
+                                  <input type="checkbox" checked={contratadasIds.has(pr.id)} onChange={() => toggleprestacionContratada(pr)} />
+                                  {pr.nombre}
+                                  {esNueva && (
+                                    <span style={{ fontSize: 10, fontWeight: 700, color: "#8A5A0D", background: "#FDEFD9", padding: "1px 6px", borderRadius: 10 }}>
+                                      NUEVO
+                                    </span>
+                                  )}
+                                </label>
+                              );
+                            })}
                           </div>
                         </div>
                       );
@@ -3353,6 +3372,12 @@ function buildNavGroups(perfil) {
     { key: "casos", label: "Casos", icon: ClipboardList, view: "casos" },
   ] });
 
+  if (perfil.rol === "Prestador") {
+    groups.push({ key: "mis-prestaciones", label: "Mi ficha", items: [
+      { key: "mis-prestaciones", label: "Mis prestaciones", icon: Stethoscope, view: "mis-prestaciones" },
+    ] });
+  }
+
   if (perfil.rol !== "Administrador" && perfil.rol !== "Prestador") {
     groups.push({ key: "padron", label: "Padrón", items: [
       { key: "padron", label: "Padrón", icon: Users, view: "padron" },
@@ -3550,6 +3575,150 @@ function ProximamenteView({ titulo, descripcion }) {
   );
 }
 
+function MisPrestacionesView({ perfil }) {
+  const [loading, setLoading] = useState(true);
+  const [prestaciones, setPrestaciones] = useState([]);
+  const [query, setQuery] = useState("");
+  const [resultados, setResultados] = useState([]);
+  const [buscando, setBuscando] = useState(false);
+  const [filtroPropias, setFiltroPropias] = useState("");
+  const [showExplorer, setShowExplorer] = useState(false);
+  const [expanded, setExpanded] = useState(new Set());
+  const [saving, setSaving] = useState(false);
+  const [status, setStatus] = useState("");
+
+  useEffect(() => {
+    let active = true;
+    setLoading(true);
+    supabase.from("prestadores").select("prestaciones_ofrecidas").eq("id", perfil.prestador_id).single()
+      .then(({ data }) => {
+        if (!active) return;
+        setPrestaciones(data?.prestaciones_ofrecidas || []);
+        setLoading(false);
+      });
+    return () => { active = false; };
+  }, [perfil.prestador_id]);
+
+  useEffect(() => {
+    if (!query.trim()) { setResultados([]); return; }
+    setBuscando(true);
+    const t = setTimeout(() => {
+      buscarPrestacionesCatalogo(query).then((r) => { setResultados(r); setBuscando(false); });
+    }, 300);
+    return () => clearTimeout(t);
+  }, [query]);
+
+  const guardar = async (next) => {
+    setSaving(true); setStatus("");
+    const { error } = await supabase.from("prestadores").update({ prestaciones_ofrecidas: next }).eq("id", perfil.prestador_id);
+    setSaving(false);
+    if (error) { setStatus("Error: " + error.message); return; }
+    setPrestaciones(next);
+    setStatus("✓ Guardado");
+    setTimeout(() => setStatus(""), 2000);
+  };
+
+  const agregar = (pr) => {
+    if (prestaciones.some((x) => x.id === pr.id)) return;
+    guardar([...prestaciones, { ...pr, codigo: "", agregado_en: new Date().toISOString() }]);
+    setQuery(""); setResultados([]);
+  };
+  const agregarVarias = (items) => {
+    const yaIds = new Set(prestaciones.map((x) => x.id));
+    guardar([...prestaciones, ...items.filter((it) => !yaIds.has(it.id))]);
+  };
+  const quitar = (id) => guardar(prestaciones.filter((x) => x.id !== id));
+  const actualizarCodigo = (id, codigo) => {
+    const next = prestaciones.map((x) => x.id === id ? { ...x, codigo } : x);
+    setPrestaciones(next); // solo local hasta que se guarde explícitamente el código (evita un guardado por tecla)
+  };
+  const guardarCodigos = () => guardar(prestaciones);
+
+  if (loading) return <div style={{ padding: 24, fontSize: 13, color: "var(--muted)" }}>Cargando...</div>;
+
+  const q = filtroPropias.trim().toLowerCase();
+  const visibles = prestaciones.filter((pr) => pr.nombre.toLowerCase().includes(q));
+  const grupos = {};
+  visibles.forEach((pr) => { (grupos[pr.grupo || pr.tipo] ||= []).push(pr); });
+  const toggleExpand = (g) => setExpanded((prev) => { const n = new Set(prev); if (n.has(g)) n.delete(g); else n.add(g); return n; });
+
+  return (
+    <div style={{ maxWidth: 720, margin: "0 auto", padding: "28px 24px" }}>
+      <div style={{ ...cardStyle, padding: 20 }}>
+        <div style={{ fontSize: 15, fontWeight: 600, color: "var(--ink)", marginBottom: 4 }}>Prestaciones que ofrezco</div>
+        <p style={{ fontSize: 13, color: "var(--muted)", marginBottom: 16, lineHeight: 1.5 }}>
+          Esto es lo que vos podés brindar en general. Cada financiador que te contrate elige, de esta lista, cuáles te contrata puntualmente a él —
+          no hace falta que le avises nada por separado, simplemente lo va a ver la próxima vez que revise tu ficha.
+        </p>
+
+        {prestaciones.length > 0 && (
+          <div style={{ marginBottom: 14 }}>
+            <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 6 }}>
+              {prestaciones.length} cargada{prestaciones.length === 1 ? "" : "s"}
+            </div>
+            {prestaciones.length > 8 && (
+              <input value={filtroPropias} onChange={(e) => setFiltroPropias(e.target.value)} placeholder="Buscar en las ya agregadas..." style={{ ...inputStyle, marginBottom: 8 }} />
+            )}
+            <div style={{ border: "1px solid var(--border)", borderRadius: 8, maxHeight: 320, overflowY: "auto" }}>
+              {Object.entries(grupos).map(([grupo, items]) => {
+                const abierto = expanded.has(grupo) || !!q;
+                return (
+                  <div key={grupo}>
+                    <div onClick={() => toggleExpand(grupo)} style={{ display: "flex", alignItems: "center", gap: 5, padding: "6px 10px", background: "var(--bg)", cursor: "pointer", fontSize: 11.5, fontWeight: 600, color: "var(--muted)" }}>
+                      {abierto ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+                      {grupo} ({items.length})
+                    </div>
+                    {abierto && items.map((pr) => (
+                      <div key={pr.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 10px 6px 26px", borderTop: "1px solid var(--border)" }}>
+                        <span style={{ fontSize: 13, color: "var(--ink)", flex: 1 }}>{pr.nombre}</span>
+                        <input
+                          value={pr.codigo || ""} onChange={(e) => actualizarCodigo(pr.id, e.target.value)} onBlur={guardarCodigos}
+                          placeholder="Tu código" style={{ ...inputStyle, padding: "4px 8px", fontSize: 12, width: 120 }}
+                        />
+                        <button onClick={() => quitar(pr.id)} style={{ border: "none", background: "transparent", cursor: "pointer", padding: 0, display: "flex", color: "var(--muted)", flexShrink: 0 }}>
+                          <X size={13} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                );
+              })}
+              {visibles.length === 0 && <div style={{ padding: "8px 10px", fontSize: 12.5, color: "var(--muted)" }}>Ninguna coincide con la búsqueda.</div>}
+            </div>
+          </div>
+        )}
+
+        <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
+          <div style={{ position: "relative", flex: 1 }}>
+            <Search size={14} color="var(--muted)" style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)" }} />
+            <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Buscar prestación por nombre..." style={{ ...inputStyle, paddingLeft: 30 }} />
+          </div>
+          <button onClick={() => setShowExplorer(true)} style={{ ...btnPrimary(true), background: "var(--surface)", color: "var(--primary-dark)", border: "1px solid var(--primary)", whiteSpace: "nowrap" }}>
+            Elegir por categoría
+          </button>
+        </div>
+        {query.trim() && (
+          <div style={{ marginTop: 6, border: "1px solid var(--border)", borderRadius: 8, maxHeight: 220, overflowY: "auto" }}>
+            {buscando && <div style={{ padding: "8px 10px", fontSize: 12.5, color: "var(--muted)" }}>Buscando...</div>}
+            {!buscando && resultados.length === 0 && <div style={{ padding: "8px 10px", fontSize: 12.5, color: "var(--muted)" }}>Sin resultados.</div>}
+            {!buscando && resultados.map((pr) => (
+              <button key={pr.id} onClick={() => agregar(pr)} style={{ display: "block", width: "100%", textAlign: "left", padding: "8px 10px", border: "none", background: "transparent", cursor: "pointer", fontSize: 13, color: "var(--ink)", fontFamily: "var(--font-body)" }}
+                onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg)"; }} onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}>
+                <span style={{ color: "var(--muted)", fontSize: 11.5 }}>{pr.tipo}</span> · {pr.nombre}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {status && <div style={{ marginTop: 12, fontSize: 12.5, color: status.startsWith("Error") ? "#A13333" : "#27500A" }}>{status}</div>}
+        {saving && <div style={{ marginTop: 8, fontSize: 12, color: "var(--muted)" }}>Guardando...</div>}
+
+        {showExplorer && <CategoryExplorerModal onClose={() => setShowExplorer(false)} onAdd={agregarVarias} />}
+      </div>
+    </div>
+  );
+}
+
 function CompletarDatosPrestadorModal({ perfil, onGuardado }) {
   const [form, setForm] = useState({
     cuit: perfil.prestador_cuit || "", telefono: perfil.prestador_telefono || "",
@@ -3664,6 +3833,7 @@ function AppShell({ session }) {
   const VIEW_TITLES = {
     padron: "Padrón", nuevo: "Nuevo caso", casos: "Casos", clientes: "Clientes", prestadores: "Prestadores", reglas: "Reglas de negocio",
     "censo-camas": "Censo de camas", facturacion: "Facturación y recuperos", traslados: "Traslados", bi: "Business Intelligence",
+    "mis-prestaciones": "Mis prestaciones",
   };
 
   return (
@@ -3707,6 +3877,7 @@ function AppShell({ session }) {
           {view === "facturacion" && <ProximamenteView titulo="Facturación y recuperos" descripcion="Control de prestaciones facturadas, validación contra lo autorizado y documentado, débitos y detección de oportunidades de recupero." />}
           {view === "traslados" && <ProximamenteView titulo="Traslados" descripcion="Auditoría de pertinencia, coordinación, trazabilidad y control operativo de traslados programados, urgentes y de derivación." />}
           {view === "bi" && <ProximamenteView titulo="Business Intelligence" descripcion="Tablero con indicadores de pendientes, vencidos, tiempo promedio de resolución, consumos y desvíos." />}
+          {view === "mis-prestaciones" && <MisPrestacionesView perfil={perfil} />}
         </div>
       </div>
     </div>
