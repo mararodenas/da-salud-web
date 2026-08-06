@@ -1737,7 +1737,7 @@ function leafDescendants(id, byParent) {
   return children.flatMap((c) => leafDescendants(c.id, byParent));
 }
 
-function CatalogTreeNode({ item, depth, byParent, selected, toggleLeaf, toggleBranch, collapsed, toggleCollapse }) {
+function CatalogTreeNode({ item, depth, byParent, selected, toggleLeaf, toggleBranch, collapsed, toggleCollapse, forceOpen }) {
   const children = byParent[item.id];
   const isLeaf = !children || children.length === 0;
 
@@ -1753,7 +1753,7 @@ function CatalogTreeNode({ item, depth, byParent, selected, toggleLeaf, toggleBr
   const leafIds = leafDescendants(item.id, byParent);
   const allSelected = leafIds.every((id) => selected.has(id));
   const someSelected = !allSelected && leafIds.some((id) => selected.has(id));
-  const isCollapsed = collapsed.has(item.id);
+  const isCollapsed = forceOpen ? false : collapsed.has(item.id);
 
   return (
     <div>
@@ -1774,7 +1774,7 @@ function CatalogTreeNode({ item, depth, byParent, selected, toggleLeaf, toggleBr
         <CatalogTreeNode
           key={c.id} item={c} depth={depth + 1} byParent={byParent}
           selected={selected} toggleLeaf={toggleLeaf} toggleBranch={toggleBranch}
-          collapsed={collapsed} toggleCollapse={toggleCollapse}
+          collapsed={collapsed} toggleCollapse={toggleCollapse} forceOpen={forceOpen}
         />
       ))}
     </div>
@@ -1792,9 +1792,15 @@ function CategoryExplorerModal({ onClose, onAdd }) {
   const catalogoKey = CASE_TYPE_CONFIG[tipo].catalogKey;
 
   useEffect(() => {
-    setLoading(true); setSelected(new Set()); setCollapsed(new Set());
+    setLoading(true); setSelected(new Set()); setQuery("");
     supabase.from("catalogo_items").select("id, nombre, parent_id").eq("catalogo_key", catalogoKey)
-      .then(({ data }) => { setTree(buildCatalogTree(data || [])); setLoading(false); });
+      .then(({ data }) => {
+        const built = buildCatalogTree(data || []);
+        setTree(built);
+        // arranca todo plegado (puede haber categorías con cientos de ítems) — se despliega solo al buscar
+        setCollapsed(new Set((built.byParent["root"] || []).map((r) => r.id)));
+        setLoading(false);
+      });
   }, [tipo]);
 
   const roots = tree.byParent["root"] || [];
@@ -1818,6 +1824,8 @@ function CategoryExplorerModal({ onClose, onAdd }) {
   // si hay búsqueda, filtramos a las hojas cuyo nombre matchea y expandimos sus padres
   const q = query.trim().toLowerCase();
   const visibleRoots = !q ? roots : roots.filter((r) => leafDescendants(r.id, tree.byParent).some((id) => tree.byId[id].nombre.toLowerCase().includes(q)));
+  const matchingLeafIds = !q ? [] : visibleRoots.flatMap((r) => leafDescendants(r.id, tree.byParent)).filter((id) => tree.byId[id].nombre.toLowerCase().includes(q));
+  const todasLasVisiblesSeleccionadas = q && matchingLeafIds.length > 0 && matchingLeafIds.every((id) => selected.has(id));
 
   const agregar = () => {
     const ahora = new Date().toISOString();
@@ -1831,12 +1839,12 @@ function CategoryExplorerModal({ onClose, onAdd }) {
   };
 
   return (
-    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(15,37,71,0.5)", zIndex: 1100, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "40px 20px", overflowY: "auto" }}>
-      <div onClick={(e) => e.stopPropagation()} style={{ ...cardStyle, padding: 20, maxWidth: 640, width: "100%" }}>
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(15,37,71,0.5)", zIndex: 1100, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "30px 20px", overflowY: "auto" }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ ...cardStyle, padding: 22, maxWidth: 920, width: "100%" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
-          <div style={{ fontSize: 14, fontWeight: 600, color: "var(--ink)" }}>Elegir por categoría</div>
+          <div style={{ fontSize: 15, fontWeight: 600, color: "var(--ink)" }}>Elegir por categoría</div>
           <button onClick={onClose} style={{ border: "none", background: "transparent", cursor: "pointer", color: "var(--muted)" }}>
-            <X size={16} />
+            <X size={18} />
           </button>
         </div>
 
@@ -1849,17 +1857,25 @@ function CategoryExplorerModal({ onClose, onAdd }) {
           <div style={{ fontSize: 13, color: "var(--muted)" }}>Cargando...</div>
         ) : (
           <>
-            <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Filtrar por nombre..." style={{ ...inputStyle, marginBottom: 10 }} />
-            {selected.size > 0 && (
-              <div style={{ fontSize: 12, color: "var(--primary-dark)", marginBottom: 8 }}>{selected.size} seleccionadas</div>
-            )}
-            <div style={{ border: "1px solid var(--border)", borderRadius: 8, padding: "8px 10px", maxHeight: 340, overflowY: "auto" }}>
+            <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Filtrar por nombre... (se despliegan solas las categorías que coinciden)" style={{ ...inputStyle, marginBottom: 10 }} />
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8, minHeight: 20 }}>
+              <span style={{ fontSize: 12, color: "var(--primary-dark)" }}>{selected.size > 0 ? `${selected.size} seleccionadas` : ""}</span>
+              {q && matchingLeafIds.length > 0 && (
+                <button
+                  onClick={() => toggleBranch(matchingLeafIds, !todasLasVisiblesSeleccionadas)}
+                  style={{ border: "none", background: "transparent", cursor: "pointer", padding: 0, fontSize: 12, fontWeight: 500, color: "var(--primary-dark)", fontFamily: "var(--font-body)" }}
+                >
+                  {todasLasVisiblesSeleccionadas ? `Quitar las ${matchingLeafIds.length} de la búsqueda` : `Seleccionar las ${matchingLeafIds.length} de la búsqueda`}
+                </button>
+              )}
+            </div>
+            <div style={{ border: "1px solid var(--border)", borderRadius: 8, padding: "8px 10px", height: 480, overflowY: "auto" }}>
               {visibleRoots.length === 0 && <div style={{ fontSize: 12.5, color: "var(--muted)" }}>Sin resultados.</div>}
               {visibleRoots.map((r) => (
                 <CatalogTreeNode
                   key={r.id} item={r} depth={0} byParent={tree.byParent}
                   selected={selected} toggleLeaf={toggleLeaf} toggleBranch={toggleBranch}
-                  collapsed={collapsed} toggleCollapse={toggleCollapse}
+                  collapsed={collapsed} toggleCollapse={toggleCollapse} forceOpen={!!q}
                 />
               ))}
             </div>
@@ -1922,6 +1938,25 @@ function descargarCatalogoXlsx(rows) {
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, "Prestaciones");
   XLSX.writeFile(wb, "catalogo_prestaciones.xlsx", { cellStyles: true });
+}
+
+function descargarListaPrestacionesXlsx(rows, nombreArchivo, tituloHoja) {
+  const headers = ["Categoría", "Prestación", "Código"];
+  const aoa = [
+    headers,
+    ...[...rows].sort((a, b) => (a.grupo || a.tipo || "").localeCompare(b.grupo || b.tipo || "") || a.nombre.localeCompare(b.nombre))
+      .map((r) => [r.grupo || r.tipo || "", r.nombre, r.codigo || ""]),
+  ];
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  ws["!cols"] = [{ wch: 30 }, { wch: 52 }, { wch: 16 }];
+  const headerStyle = { font: { bold: true, color: { rgb: "FFFFFF" } }, fill: { fgColor: { rgb: "0F2547" } } };
+  headers.forEach((_, c) => {
+    const cell = XLSX.utils.encode_cell({ r: 0, c });
+    if (ws[cell]) ws[cell].s = headerStyle;
+  });
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, (tituloHoja || "Prestaciones").slice(0, 31));
+  XLSX.writeFile(wb, nombreArchivo, { cellStyles: true });
 }
 
 function leerPrestacionesXlsx(arrayBuffer) {
@@ -2635,8 +2670,16 @@ function PrestadoresView({ perfil }) {
                 });
                 return (
                   <div style={{ marginBottom: 12 }}>
-                    <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 6 }}>
-                      {form.prestaciones_ofrecidas.length} cargada{form.prestaciones_ofrecidas.length === 1 ? "" : "s"}
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+                      <div style={{ fontSize: 12, color: "var(--muted)" }}>
+                        {form.prestaciones_ofrecidas.length} cargada{form.prestaciones_ofrecidas.length === 1 ? "" : "s"}
+                      </div>
+                      <button
+                        onClick={() => descargarListaPrestacionesXlsx(form.prestaciones_ofrecidas, `prestaciones_${(form.nombre || "prestador").replace(/[^a-z0-9]+/gi, "_")}.xlsx`, "Prestaciones que ofrece")}
+                        style={{ border: "none", background: "transparent", cursor: "pointer", padding: 0, display: "flex", alignItems: "center", gap: 4, fontSize: 11.5, fontWeight: 500, color: "var(--primary-dark)", fontFamily: "var(--font-body)" }}
+                      >
+                        <FileText size={12} /> Descargar esta lista
+                      </button>
                     </div>
                     {form.prestaciones_ofrecidas.length > 8 && (
                       <input
@@ -2919,7 +2962,17 @@ function PrestadoresView({ perfil }) {
 
               return (
                 <div style={{ marginBottom: 14 }}>
-                  <label style={labelStyle}>Prestaciones contratadas</label>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                    <label style={labelStyle}>Prestaciones contratadas</label>
+                    {vinculoForm.prestaciones_contratadas.length > 0 && (
+                      <button
+                        onClick={() => descargarListaPrestacionesXlsx(vinculoForm.prestaciones_contratadas, `prestaciones_contratadas_${(editingVinculo.nombre || "prestador").replace(/[^a-z0-9]+/gi, "_")}.xlsx`, "Contratadas")}
+                        style={{ border: "none", background: "transparent", cursor: "pointer", padding: 0, display: "flex", alignItems: "center", gap: 4, fontSize: 11.5, fontWeight: 500, color: "var(--primary-dark)", fontFamily: "var(--font-body)" }}
+                      >
+                        <FileText size={12} /> Descargar
+                      </button>
+                    )}
+                  </div>
                   <p style={{ fontSize: 11.5, color: "var(--muted)", margin: "2px 0 8px" }}>
                     Tildá cuáles de las prestaciones que ofrece este prestador le contrataste.
                     {vinculoForm.prestaciones_contratadas.length > 0 && ` (${vinculoForm.prestaciones_contratadas.length} de ${editingVinculo.prestaciones_ofrecidas.length} seleccionadas)`}
@@ -3653,8 +3706,16 @@ function MisPrestacionesView({ perfil }) {
 
         {prestaciones.length > 0 && (
           <div style={{ marginBottom: 14 }}>
-            <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 6 }}>
-              {prestaciones.length} cargada{prestaciones.length === 1 ? "" : "s"}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+              <div style={{ fontSize: 12, color: "var(--muted)" }}>
+                {prestaciones.length} cargada{prestaciones.length === 1 ? "" : "s"}
+              </div>
+              <button
+                onClick={() => descargarListaPrestacionesXlsx(prestaciones, "mis_prestaciones.xlsx", "Mis prestaciones")}
+                style={{ border: "none", background: "transparent", cursor: "pointer", padding: 0, display: "flex", alignItems: "center", gap: 4, fontSize: 11.5, fontWeight: 500, color: "var(--primary-dark)", fontFamily: "var(--font-body)" }}
+              >
+                <FileText size={12} /> Descargar esta lista
+              </button>
             </div>
             {prestaciones.length > 8 && (
               <input value={filtroPropias} onChange={(e) => setFiltroPropias(e.target.value)} placeholder="Buscar en las ya agregadas..." style={{ ...inputStyle, marginBottom: 8 }} />
