@@ -3,7 +3,7 @@ import * as XLSX from "xlsx";
 import {
   ClipboardList, Plus, LogOut, Users, AlertTriangle,
   Clock, Search, Inbox, Paperclip, FileText, Building2, ShieldCheck,
-  ChevronDown, ChevronRight, BedDouble, Receipt, Ambulance, BarChart3, Upload, X, Stethoscope, Menu,
+  ChevronDown, ChevronRight, BedDouble, Receipt, Ambulance, BarChart3, Upload, X, Stethoscope, Menu, UserPlus,
 } from "lucide-react";
 import { supabase } from "./supabaseClient";
 import {
@@ -37,6 +37,255 @@ const btnPrimary = (enabled) => ({
 });
 
 /* ---------- login ---------- */
+
+const ROLES_INVITABLES = ["Administrador", "Coordinador", "Auditor", "Administrador Cliente", "Prestador"];
+
+function InvitarUsuarioView({ perfil }) {
+  const [nombre, setNombre] = useState("");
+  const [email, setEmail] = useState("");
+  const [rol, setRol] = useState("Prestador");
+  const [clienteId, setClienteId] = useState(null);
+  const [prestadorId, setPrestadorId] = useState(null);
+  const [clientes, setClientes] = useState([]);
+  const [prestadores, setPrestadores] = useState([]);
+  const [buscarPrestador, setBuscarPrestador] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [linkGenerado, setLinkGenerado] = useState(null);
+  const [copiado, setCopiado] = useState(false);
+  const [invitaciones, setInvitaciones] = useState([]);
+
+  useEffect(() => {
+    supabase.from("clientes").select("id, nombre").order("nombre").then(({ data }) => setClientes(data || []));
+    cargarInvitaciones();
+  }, []);
+
+  useEffect(() => {
+    if (rol !== "Prestador" || buscarPrestador.trim().length < 2) { setPrestadores([]); return; }
+    const t = setTimeout(() => {
+      supabase.from("prestadores").select("id, nombre, razon_social").ilike("nombre", `%${buscarPrestador}%`).limit(20)
+        .then(({ data }) => setPrestadores(data || []));
+    }, 300);
+    return () => clearTimeout(t);
+  }, [buscarPrestador, rol]);
+
+  const cargarInvitaciones = () => {
+    supabase.from("invitaciones").select("id, nombre, email, rol, usado, creado_en, token").order("creado_en", { ascending: false }).limit(20)
+      .then(({ data }) => setInvitaciones(data || []));
+  };
+
+  const necesitaCliente = rol === "Administrador Cliente";
+  const necesitaPrestador = rol === "Prestador";
+  const puedeEnviar = nombre.trim() && email.trim() && (!necesitaCliente || clienteId) && (!necesitaPrestador || prestadorId);
+
+  const enviar = async () => {
+    setSaving(true); setError(""); setLinkGenerado(null);
+    const { data, error } = await supabase.from("invitaciones").insert({
+      nombre: nombre.trim(), email: email.trim().toLowerCase(), rol,
+      cliente_id: necesitaCliente ? clienteId : null,
+      prestador_id: necesitaPrestador ? prestadorId : null,
+    }).select("token").single();
+    setSaving(false);
+    if (error) { setError(error.message); return; }
+    const url = `${window.location.origin}${window.location.pathname}?invite=${data.token}`;
+    setLinkGenerado(url);
+    setNombre(""); setEmail(""); setClienteId(null); setPrestadorId(null); setBuscarPrestador("");
+    cargarInvitaciones();
+  };
+
+  const copiar = () => {
+    navigator.clipboard.writeText(linkGenerado);
+    setCopiado(true);
+    setTimeout(() => setCopiado(false), 2000);
+  };
+
+  return (
+    <div style={{ maxWidth: 640, margin: "0 auto", padding: "28px 24px" }}>
+      <div style={{ ...cardStyle, padding: 22, marginBottom: 20 }}>
+        <div style={{ fontSize: 15, fontWeight: 600, color: "var(--ink)", marginBottom: 4 }}>Invitar usuario</div>
+        <p style={{ fontSize: 12.5, color: "var(--muted)", marginBottom: 18, lineHeight: 1.5 }}>
+          Generá un link de una sola vez para que la persona cree su propia contraseña.
+          No se manda ningún email automático — copiás el link y se lo pasás vos por el medio que prefieras.
+        </p>
+
+        <label style={labelStyle}>Nombre</label>
+        <input value={nombre} onChange={(e) => setNombre(e.target.value)} style={{ ...inputStyle, marginBottom: 12 }} />
+
+        <label style={labelStyle}>Email</label>
+        <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} style={{ ...inputStyle, marginBottom: 12 }} />
+
+        <label style={labelStyle}>Rol</label>
+        <select value={rol} onChange={(e) => { setRol(e.target.value); setClienteId(null); setPrestadorId(null); }} style={{ ...inputStyle, marginBottom: 12 }}>
+          {ROLES_INVITABLES.map((r) => <option key={r} value={r}>{r}</option>)}
+        </select>
+
+        {necesitaCliente && (
+          <>
+            <label style={labelStyle}>Financiador</label>
+            <div style={{ marginBottom: 12 }}>
+              <SearchableSelect value={clienteId} onChange={setClienteId} options={clientes} placeholder="Seleccionar financiador..." />
+            </div>
+          </>
+        )}
+
+        {necesitaPrestador && (
+          <>
+            <label style={labelStyle}>Prestador</label>
+            <input
+              value={buscarPrestador}
+              onChange={(e) => { setBuscarPrestador(e.target.value); setPrestadorId(null); }}
+              placeholder="Buscar prestador por nombre..." style={{ ...inputStyle, marginBottom: 6 }}
+            />
+            {prestadorId && <div style={{ fontSize: 12, color: "var(--primary-dark)", marginBottom: 6 }}>Seleccionado ✓</div>}
+            {prestadores.length > 0 && !prestadorId && (
+              <div style={{ border: "1px solid var(--border)", borderRadius: 8, maxHeight: 180, overflowY: "auto", marginBottom: 12 }}>
+                {prestadores.map((p) => (
+                  <button key={p.id} onClick={() => { setPrestadorId(p.id); setBuscarPrestador(p.nombre || p.razon_social); setPrestadores([]); }}
+                    style={{ display: "block", width: "100%", textAlign: "left", padding: "7px 10px", border: "none", background: "transparent", cursor: "pointer", fontSize: 13, fontFamily: "var(--font-body)" }}>
+                    {p.nombre || p.razon_social}
+                  </button>
+                ))}
+              </div>
+            )}
+          </>
+        )}
+
+        {error && (
+          <div style={{ marginTop: 4, marginBottom: 12, fontSize: 12.5, color: "#791F1F", background: "#FCEBEB", padding: "8px 10px", borderRadius: 8 }}>
+            {error}
+          </div>
+        )}
+
+        <button onClick={enviar} disabled={!puedeEnviar || saving} style={{ ...btnPrimary(puedeEnviar && !saving), marginTop: 4 }}>
+          {saving ? "Generando..." : "Generar link de invitación"}
+        </button>
+
+        {linkGenerado && (
+          <div style={{ marginTop: 16, padding: 12, background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 8 }}>
+            <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 6 }}>Link generado (válido 14 días, un solo uso):</div>
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <input readOnly value={linkGenerado} style={{ ...inputStyle, fontSize: 11.5, flex: 1 }} onFocus={(e) => e.target.select()} />
+              <button onClick={copiar} style={{ ...btnPrimary(true), whiteSpace: "nowrap" }}>{copiado ? "¡Copiado!" : "Copiar"}</button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div style={{ ...cardStyle, padding: 22 }}>
+        <div style={{ fontSize: 14, fontWeight: 600, color: "var(--ink)", marginBottom: 12 }}>Últimas invitaciones</div>
+        {invitaciones.length === 0 && <div style={{ fontSize: 12.5, color: "var(--muted)" }}>Todavía no se generó ninguna.</div>}
+        {invitaciones.map((inv) => (
+          <div key={inv.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "7px 0", borderBottom: "1px solid var(--border)", fontSize: 12.5 }}>
+            <div>
+              <span style={{ color: "var(--ink)", fontWeight: 500 }}>{inv.nombre}</span>{" "}
+              <span style={{ color: "var(--muted)" }}>· {inv.email} · {inv.rol}</span>
+            </div>
+            <span style={{ fontSize: 11, fontWeight: 600, color: inv.usado ? "#27500A" : "#8A5A0D", background: inv.usado ? "#E8F3E1" : "#FDEFD9", padding: "2px 8px", borderRadius: 10 }}>
+              {inv.usado ? "ACEPTADA" : "PENDIENTE"}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function AcceptInviteScreen({ token }) {
+  const [loading, setLoading] = useState(true);
+  const [invitacion, setInvitacion] = useState(null);
+  const [notFound, setNotFound] = useState(false);
+  const [password, setPassword] = useState("");
+  const [password2, setPassword2] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
+  const [step, setStep] = useState("form"); // form | esperando_confirmacion | listo
+
+  useEffect(() => {
+    supabase.from("invitaciones").select("nombre, email, rol").eq("token", token).single()
+      .then(({ data, error }) => {
+        if (error || !data) setNotFound(true); else setInvitacion(data);
+        setLoading(false);
+      });
+  }, [token]);
+
+  const aceptar = async () => {
+    setError("");
+    if (password.length < 6) { setError("La contraseña tiene que tener al menos 6 caracteres."); return; }
+    if (password !== password2) { setError("Las contraseñas no coinciden."); return; }
+    setSubmitting(true);
+
+    const { data: signUpData, error: signUpError } = await supabase.auth.signUp({ email: invitacion.email, password });
+    if (signUpError) { setSubmitting(false); setError(signUpError.message); return; }
+
+    if (!signUpData.session) {
+      // El proyecto requiere confirmar el email antes de poder loguearse
+      localStorage.setItem("da_salud_invite_token", token);
+      setStep("esperando_confirmacion");
+      setSubmitting(false);
+      return;
+    }
+
+    const { error: rpcError } = await supabase.rpc("aceptar_invitacion", { p_token: token });
+    setSubmitting(false);
+    if (rpcError) { setError(rpcError.message); return; }
+    localStorage.removeItem("da_salud_invite_token");
+    window.location.href = window.location.pathname; // recarga limpia, ya logueado
+  };
+
+  if (loading) return <div style={{ minHeight: "100vh", background: "var(--bg)" }} />;
+
+  if (notFound) {
+    return (
+      <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "var(--bg)", padding: 24 }}>
+        <div style={{ ...cardStyle, width: "100%", maxWidth: 380, padding: 32, textAlign: "center" }}>
+          <div style={{ fontSize: 14, color: "var(--ink)", fontWeight: 600, marginBottom: 6 }}>Este link ya no es válido</div>
+          <p style={{ fontSize: 12.5, color: "var(--muted)" }}>Puede haber vencido o ya haberse usado. Pedile a DA Salud que te genere uno nuevo.</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (step === "esperando_confirmacion") {
+    return (
+      <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "var(--bg)", padding: 24 }}>
+        <div style={{ ...cardStyle, width: "100%", maxWidth: 380, padding: 32, textAlign: "center" }}>
+          <div style={{ fontSize: 14, color: "var(--ink)", fontWeight: 600, marginBottom: 6 }}>Confirmá tu email</div>
+          <p style={{ fontSize: 12.5, color: "var(--muted)" }}>Te mandamos un mail a {invitacion.email} para confirmar la cuenta. Después de confirmarlo, volvé a entrar al sitio normalmente con tu email y contraseña.</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "var(--bg)", padding: 24 }}>
+      <div style={{ ...cardStyle, width: "100%", maxWidth: 380, padding: 32 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
+          <img src="/logo.png" alt="DA Salud" style={{ height: 34, width: "auto" }} />
+          <div style={{ fontFamily: "var(--font-display)", fontWeight: 600, fontSize: 18, color: "var(--ink)" }}>DA Salud</div>
+        </div>
+        <div style={{ fontSize: 13, color: "var(--muted)", marginBottom: 20 }}>
+          Estás por crear tu cuenta como <strong>{invitacion.rol}</strong> ({invitacion.email}). Elegí una contraseña para continuar.
+        </div>
+
+        <label style={labelStyle}>Contraseña</label>
+        <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} style={inputStyle} />
+
+        <label style={{ ...labelStyle, marginTop: 14 }}>Repetir contraseña</label>
+        <input type="password" value={password2} onChange={(e) => setPassword2(e.target.value)} style={inputStyle} />
+
+        {error && (
+          <div style={{ marginTop: 14, fontSize: 12.5, color: "#791F1F", background: "#FCEBEB", padding: "8px 10px", borderRadius: 8 }}>
+            {error}
+          </div>
+        )}
+
+        <button onClick={aceptar} disabled={submitting} style={{ ...btnPrimary(!submitting), width: "100%", justifyContent: "center", marginTop: 20 }}>
+          {submitting ? "Creando cuenta..." : "Crear mi cuenta"}
+        </button>
+      </div>
+    </div>
+  );
+}
 
 function LoginScreen() {
   const [email, setEmail] = useState("");
@@ -3418,6 +3667,9 @@ function buildNavGroups(perfil) {
       adminItems.push({ key: "reglas", label: "Reglas de negocio", icon: ShieldCheck, view: "reglas" });
     }
     adminItems.push({ key: "prestadores", label: "Prestadores", icon: Stethoscope, view: "prestadores" });
+    if (perfil.rol === "Administrador") {
+      adminItems.push({ key: "invitar", label: "Invitar usuario", icon: UserPlus, view: "invitar" });
+    }
     groups.push({ key: "admin", label: "Administración", items: adminItems });
   }
 
@@ -3894,7 +4146,7 @@ function AppShell({ session }) {
   const VIEW_TITLES = {
     padron: "Padrón", nuevo: "Nuevo caso", casos: "Casos", clientes: "Clientes", prestadores: "Prestadores", reglas: "Reglas de negocio",
     "censo-camas": "Censo de camas", facturacion: "Facturación y recuperos", traslados: "Traslados", bi: "Business Intelligence",
-    "mis-prestaciones": "Mis prestaciones",
+    "mis-prestaciones": "Mis prestaciones", invitar: "Invitar usuario",
   };
 
   return (
@@ -3939,6 +4191,7 @@ function AppShell({ session }) {
           {view === "traslados" && <ProximamenteView titulo="Traslados" descripcion="Auditoría de pertinencia, coordinación, trazabilidad y control operativo de traslados programados, urgentes y de derivación." />}
           {view === "bi" && <ProximamenteView titulo="Business Intelligence" descripcion="Tablero con indicadores de pendientes, vencidos, tiempo promedio de resolución, consumos y desvíos." />}
           {view === "mis-prestaciones" && <MisPrestacionesView perfil={perfil} />}
+          {view === "invitar" && <InvitarUsuarioView perfil={perfil} />}
         </div>
       </div>
     </div>
@@ -3947,6 +4200,7 @@ function AppShell({ session }) {
 
 export default function App() {
   const [session, setSession] = useState(undefined);
+  const inviteToken = new URLSearchParams(window.location.search).get("invite") || localStorage.getItem("da_salud_invite_token");
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => setSession(data.session));
@@ -3954,7 +4208,28 @@ export default function App() {
     return () => listener.subscription.unsubscribe();
   }, []);
 
+  // si venís de aceptar una invitación y el proyecto pedía confirmar el
+  // email, cuando vuelvas logueado esto termina de crear el perfil solo
+  useEffect(() => {
+    if (session && inviteToken) {
+      supabase.from("perfiles").select("id").eq("id", session.user.id).maybeSingle().then(({ data }) => {
+        if (!data) {
+          supabase.rpc("aceptar_invitacion", { p_token: inviteToken }).then(() => {
+            localStorage.removeItem("da_salud_invite_token");
+            window.location.href = window.location.pathname;
+          });
+        } else {
+          localStorage.removeItem("da_salud_invite_token");
+        }
+      });
+    }
+  }, [session, inviteToken]);
+
   if (session === undefined) return <div style={{ ...THEME, minHeight: "100vh", background: "var(--bg)" }} />;
+
+  if (!session && inviteToken) {
+    return <div style={{ ...THEME, fontFamily: "var(--font-body)" }}><AcceptInviteScreen token={inviteToken} /></div>;
+  }
 
   return (
     <div style={{ ...THEME, fontFamily: "var(--font-body)" }}>
