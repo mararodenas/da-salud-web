@@ -52,6 +52,7 @@ function InvitarUsuarioView({ perfil }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [linkGenerado, setLinkGenerado] = useState(null);
+  const [mailEnviado, setMailEnviado] = useState(false);
   const [copiado, setCopiado] = useState(false);
   const [invitaciones, setInvitaciones] = useState([]);
 
@@ -79,16 +80,24 @@ function InvitarUsuarioView({ perfil }) {
   const puedeEnviar = nombre.trim() && email.trim() && (!necesitaCliente || clienteId) && (!necesitaPrestador || prestadorId);
 
   const enviar = async () => {
-    setSaving(true); setError(""); setLinkGenerado(null);
+    setSaving(true); setError(""); setLinkGenerado(null); setMailEnviado(false);
     const { data, error } = await supabase.from("invitaciones").insert({
       nombre: nombre.trim(), email: email.trim().toLowerCase(), rol,
       cliente_id: necesitaCliente ? clienteId : null,
       prestador_id: necesitaPrestador ? prestadorId : null,
     }).select("token").single();
+    if (error) { setSaving(false); setError(error.message); return; }
+
+    const { data: sendResult, error: sendError } = await supabase.functions.invoke("send-invite-email", { body: { token: data.token } });
     setSaving(false);
-    if (error) { setError(error.message); return; }
     const url = `${window.location.origin}${window.location.pathname}?invite=${data.token}`;
-    setLinkGenerado(url);
+    if (sendError || sendResult?.error) {
+      setError(`El link se generó, pero el mail no se pudo mandar solo (${sendResult?.error || sendError.message}). Copialo y mandalo vos manualmente.`);
+      setLinkGenerado(url);
+    } else {
+      setMailEnviado(true);
+      setLinkGenerado(url);
+    }
     setNombre(""); setEmail(""); setClienteId(null); setPrestadorId(null); setBuscarPrestador("");
     cargarInvitaciones();
   };
@@ -104,8 +113,8 @@ function InvitarUsuarioView({ perfil }) {
       <div style={{ ...cardStyle, padding: 22, marginBottom: 20 }}>
         <div style={{ fontSize: 15, fontWeight: 600, color: "var(--ink)", marginBottom: 4 }}>Invitar usuario</div>
         <p style={{ fontSize: 12.5, color: "var(--muted)", marginBottom: 18, lineHeight: 1.5 }}>
-          Generá un link de una sola vez para que la persona cree su propia contraseña.
-          No se manda ningún email automático — copiás el link y se lo pasás vos por el medio que prefieras.
+          Se le manda un mail automático con un link de una sola vez para que la persona cree su propia contraseña.
+          Si el envío falla por algún motivo, te dejamos el link para que se lo mandes vos manualmente.
         </p>
 
         <label style={labelStyle}>Nombre</label>
@@ -157,12 +166,18 @@ function InvitarUsuarioView({ perfil }) {
         )}
 
         <button onClick={enviar} disabled={!puedeEnviar || saving} style={{ ...btnPrimary(puedeEnviar && !saving), marginTop: 4 }}>
-          {saving ? "Generando..." : "Generar link de invitación"}
+          {saving ? "Enviando..." : "Invitar"}
         </button>
 
-        {linkGenerado && (
+        {mailEnviado && (
+          <div style={{ marginTop: 16, padding: 12, background: "#E8F3E1", border: "1px solid #C5E0B4", borderRadius: 8, fontSize: 12.5, color: "#27500A" }}>
+            ✓ Mail de invitación enviado. No hace falta que hagas nada más — cuando la persona lo acepte, va a aparecer como "ACEPTADA" en la lista de abajo.
+          </div>
+        )}
+
+        {!mailEnviado && linkGenerado && (
           <div style={{ marginTop: 16, padding: 12, background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 8 }}>
-            <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 6 }}>Link generado (válido 14 días, un solo uso):</div>
+            <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 6 }}>Link generado (válido 14 días, un solo uso) — mandalo vos manualmente:</div>
             <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
               <input readOnly value={linkGenerado} style={{ ...inputStyle, fontSize: 11.5, flex: 1 }} onFocus={(e) => e.target.select()} />
               <button onClick={copiar} style={{ ...btnPrimary(true), whiteSpace: "nowrap" }}>{copiado ? "¡Copiado!" : "Copiar"}</button>
