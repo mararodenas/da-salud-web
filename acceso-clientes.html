@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>Acceso clientes | DA Salud</title>
+  <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main class="access-page">
+    <section class="access-card" aria-labelledby="access-title">
+      <img src="assets/logo-da-salud.png" alt="DA Salud">
+      <div class="kicker" style="text-align:center">Portal de clientes</div>
+      <h1 id="access-title">Acceso clientes</h1>
+      <p>Esta pantalla queda preparada para conectar el portal con la aplicación de DA Salud.</p>
+      <form id="access-form">
+        <div class="field"><label for="email">Correo electrónico</label><input id="email" name="email" type="email" autocomplete="email" required></div>
+        <div class="field"><label for="password">Contraseña</label><input id="password" name="password" type="password" autocomplete="current-password" required></div>
+        <button class="btn btn-primary" type="submit" style="width:100%">Ingresar</button>
+        <div class="notice" id="access-message" hidden></div>
+      </form>
+      <a class="back" href="index.html">← Volver a DA Salud</a>
+    </section>
+  </main>
+  <script src="config.js"></script>
+  <script src="script.js"></script>
+</body>
+</html>
